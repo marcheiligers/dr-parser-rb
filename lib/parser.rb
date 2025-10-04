@@ -36,7 +36,18 @@ class RubyParser
       elsif char == "'"
         parse_string_single
       elsif char == ':'
-        parse_symbol
+        # Check if this is :: (scope operator), part of namespace, or a symbol
+        if @pos + 1 < @input.length
+          next_char = @input[@pos + 1]
+          if next_char == ':' || (next_char >= 'A' && next_char <= 'Z')
+            # :: or :Constant - treat as operator
+            parse_operator
+          else
+            parse_symbol
+          end
+        else
+          parse_operator
+        end
       elsif operator_start?(char)
         parse_operator
       elsif identifier_start?(char)
@@ -194,12 +205,23 @@ class RubyParser
 
   def parse_identifier
     start_pos = @pos
+    first_char = @input[@pos]
+
     while @pos < @input.length && identifier_char?(@input[@pos])
       @pos += 1
     end
 
     value = @input[start_pos..@pos - 1]
-    token_type = KEYWORDS.include?(value) ? :keyword : :identifier
+
+    # Determine token type: constant (starts with uppercase), keyword, or identifier
+    if first_char >= 'A' && first_char <= 'Z'
+      token_type = :constant
+    elsif KEYWORDS.include?(value)
+      token_type = :keyword
+    else
+      token_type = :identifier
+    end
+
     add_token(token_type, start_pos, @pos - 1)
   end
 

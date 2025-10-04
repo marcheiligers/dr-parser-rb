@@ -219,3 +219,50 @@ def test_parses_number_ending_with_dot_space(_args, assert)
     token(:whitespace, ' ', 3, 3)
   ])
 end
+
+def test_parses_constant(_args, assert)
+  assert_parses_to(assert, 'Foo', [
+    token(:constant, 'Foo', 0, 2)
+  ])
+end
+
+def test_parses_screaming_snake_case_constant(_args, assert)
+  assert_parses_to(assert, 'MY_CONSTANT', [
+    token(:constant, 'MY_CONSTANT', 0, 10)
+  ])
+end
+
+def test_parses_class_definition(_args, assert)
+  assert_parses_to(assert, 'class Foo', [
+    token(:keyword, 'class', 0, 4),
+    token(:whitespace, ' ', 5, 5),
+    token(:constant, 'Foo', 6, 8)
+  ])
+end
+
+def test_parses_namespaced_constant(_args, assert)
+  assert_parses_to(assert, 'Foo::Bar', [
+    token(:constant, 'Foo', 0, 2),
+    token(:operator, ':', 3, 3),
+    token(:operator, ':', 4, 4),
+    token(:constant, 'Bar', 5, 7)
+  ])
+end
+
+def test_parses_constant_assignment(_args, assert)
+  assert_parses_to(assert, 'MAX = 100', [
+    token(:constant, 'MAX', 0, 2),
+    token(:whitespace, ' ', 3, 3),
+    token(:operator, '=', 4, 4),
+    token(:whitespace, ' ', 5, 5),
+    token(:number, '100', 6, 8)
+  ])
+end
+
+def test_parses_module_definition(_args, assert)
+  assert_parses_to(assert, 'module MyModule', [
+    token(:keyword, 'module', 0, 5),
+    token(:whitespace, ' ', 6, 6),
+    token(:constant, 'MyModule', 7, 14)
+  ])
+end
