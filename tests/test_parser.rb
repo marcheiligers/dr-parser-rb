@@ -117,3 +117,55 @@ def test_parses_incomplete_string_with_escape(_args, assert)
     token(:string, '"hello\\"', 0, 7)
   ])
 end
+
+def test_parses_keyword_class(_args, assert)
+  assert_parses_to(assert, 'class', [
+    token(:keyword, 'class', 0, 4)
+  ])
+end
+
+def test_parses_keyword_def(_args, assert)
+  assert_parses_to(assert, 'def', [
+    token(:keyword, 'def', 0, 2)
+  ])
+end
+
+def test_parses_keyword_module(_args, assert)
+  assert_parses_to(assert, 'module', [
+    token(:keyword, 'module', 0, 5)
+  ])
+end
+
+def test_parses_keyword_end(_args, assert)
+  assert_parses_to(assert, 'end', [
+    token(:keyword, 'end', 0, 2)
+  ])
+end
+
+def test_parses_keywords_if_else(_args, assert)
+  assert_parses_to(assert, 'if true else false end', [
+    token(:keyword, 'if', 0, 1),
+    token(:whitespace, ' ', 2, 2),
+    token(:keyword, 'true', 3, 6),
+    token(:whitespace, ' ', 7, 7),
+    token(:keyword, 'else', 8, 11),
+    token(:whitespace, ' ', 12, 12),
+    token(:keyword, 'false', 13, 17),
+    token(:whitespace, ' ', 18, 18),
+    token(:keyword, 'end', 19, 21)
+  ])
+end
+
+def test_distinguishes_keyword_from_identifier(_args, assert)
+  assert_parses_to(assert, 'class_name', [
+    token(:identifier, 'class_name', 0, 9)
+  ])
+end
+
+def test_parses_def_method(_args, assert)
+  assert_parses_to(assert, 'def foo', [
+    token(:keyword, 'def', 0, 2),
+    token(:whitespace, ' ', 3, 3),
+    token(:identifier, 'foo', 4, 6)
+  ])
+end

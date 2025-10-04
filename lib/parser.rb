@@ -5,6 +5,14 @@ class RubyParser
     '(', ')', '[', ']', '{', '}', ',', '.', ':', ';', '?'
   ]
 
+  KEYWORDS = [
+    'alias', 'and', 'begin', 'break', 'case', 'class', 'def', 'defined?',
+    'do', 'else', 'elsif', 'end', 'ensure', 'false', 'for', 'if', 'in',
+    'module', 'next', 'nil', 'not', 'or', 'redo', 'rescue', 'retry',
+    'return', 'self', 'super', 'then', 'true', 'undef', 'unless', 'until',
+    'when', 'while', 'yield'
+  ]
+
   def initialize(input)
     @input = input
     @pos = 0
@@ -175,7 +183,10 @@ class RubyParser
     while @pos < @input.length && identifier_char?(@input[@pos])
       @pos += 1
     end
-    add_token(:identifier, start_pos, @pos - 1)
+
+    value = @input[start_pos..@pos - 1]
+    token_type = KEYWORDS.include?(value) ? :keyword : :identifier
+    add_token(token_type, start_pos, @pos - 1)
   end
 
   def add_token(type, start_pos, end_pos)
