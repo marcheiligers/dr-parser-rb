@@ -1,0 +1,23 @@
+* EXCEPTION:
+* ERROR: Exception while requiring tests/tests.rb.
+* EXCEPTION: ~Runtime#add_to_require_queue~ failed for =tests/tests.rb=.
+* ERROR: Exception while requiring tests/test_parser.rb.
+* EXCEPTION: ~Runtime#add_to_require_queue~ failed for =tests/test_parser.rb=.
+* ERROR: Exception while requiring tests/test_helpers.rb.
+* EXCEPTION: ~Runtime#add_to_require_queue~ failed for =tests/test_helpers.rb=.
+* ERROR: Exception while requiring tests/../lib/parser.rb.
+tests/../lib/parser.rb does not exist.
+** Backtrace:
+*** tests/test_helpers.rb:1
+*** tests/test_parser.rb:1
+*** tests/tests.rb:1
+** Backtrace:
+*** tests/test_helpers.rb:1
+*** tests/test_parser.rb:1
+*** tests/tests.rb:1
+** Backtrace:
+*** tests/test_parser.rb:1
+*** tests/tests.rb:1
+** Backtrace:
+*** tests/tests.rb:1
+** Backtrace:
