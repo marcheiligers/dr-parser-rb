@@ -36,11 +36,11 @@ class RubyParser
       elsif char == "'"
         parse_string_single
       elsif char == ':'
-        # Check if this is :: (scope operator), part of namespace, or a symbol
+        # Check if this is :: (scope operator), part of namespace, hash syntax, or a symbol
         if @pos + 1 < @input.length
           next_char = @input[@pos + 1]
-          if next_char == ':' || (next_char >= 'A' && next_char <= 'Z')
-            # :: or :Constant - treat as operator
+          if next_char == ':' || (next_char >= 'A' && next_char <= 'Z') || whitespace?(next_char) || next_char == '}'
+            # :: or :Constant or hash syntax (a: value) - treat as operator
             parse_operator
           else
             parse_symbol
@@ -123,22 +123,102 @@ class RubyParser
   end
 
   def parse_string_double
-    start_pos = @pos
+    string_start = @pos
     @pos += 1  # skip opening quote
 
     while @pos < @input.length
       char = @input[@pos]
+
       if char == '\\'
-        @pos += 2  # skip escape sequence
+        # Check for escaped interpolation
+        if @pos + 1 < @input.length && @input[@pos + 1] == '#'
+          @pos += 2  # skip \#
+        else
+          @pos += 2  # skip other escape sequence
+        end
+      elsif char == '#' && @pos + 1 < @input.length && @input[@pos + 1] == '{'
+        # Found interpolation - emit string token up to here
+        if @pos > string_start
+          add_token(:string, string_start, @pos - 1)
+        end
+
+        # Parse interpolation
+        parse_interpolation
+
+        # Continue with next string segment
+        string_start = @pos
       elsif char == '"'
-        @pos += 1  # include closing quote
-        break
+        # Emit final string token including closing quote
+        add_token(:string, string_start, @pos)
+        @pos += 1
+        return
       else
         @pos += 1
       end
     end
 
-    add_token(:string, start_pos, @pos - 1)
+    # Incomplete string - emit what we have
+    if @pos > string_start
+      add_token(:string, string_start, @pos - 1)
+    end
+  end
+
+  def parse_interpolation
+    # Emit interpolation start token
+    interp_start = @pos
+    @pos += 2  # skip #{
+    add_token(:interpolation_start, interp_start, @pos - 1)
+
+    # Track brace depth to handle nested braces
+    brace_depth = 1
+
+    # Parse tokens inside interpolation
+    while @pos < @input.length && brace_depth > 0
+      char = @input[@pos]
+
+      if char == '{'
+        brace_depth += 1
+        parse_operator
+      elsif char == '}'
+        brace_depth -= 1
+        if brace_depth == 0
+          # Emit interpolation end token
+          add_token(:interpolation_end, @pos, @pos)
+          @pos += 1
+        else
+          parse_operator
+        end
+      elsif whitespace?(char)
+        parse_whitespace
+      elsif digit?(char)
+        parse_number
+      elsif char == '#'
+        parse_comment
+      elsif char == '"'
+        parse_string_double
+      elsif char == "'"
+        parse_string_single
+      elsif char == ':'
+        # Check if this is :: (scope operator), part of namespace, hash syntax, or a symbol
+        if @pos + 1 < @input.length
+          next_char = @input[@pos + 1]
+          if next_char == ':' || (next_char >= 'A' && next_char <= 'Z') || whitespace?(next_char) || next_char == '}'
+            # :: or :Constant or hash syntax (a: value) - treat as operator
+            parse_operator
+          else
+            parse_symbol
+          end
+        else
+          parse_operator
+        end
+      elsif operator_start?(char)
+        parse_operator
+      elsif identifier_start?(char)
+        parse_identifier
+      else
+        @pos += 1
+      end
+    end
   end
 
   def parse_string_single
