@@ -93,3 +93,27 @@ def test_parses_code_with_comment(_args, assert)
     token(:comment, '# set x', 6, 12)
   ])
 end
+
+def test_parses_incomplete_double_quote_string(_args, assert)
+  assert_parses_to(assert, '"hello', [
+    token(:string, '"hello', 0, 5)
+  ])
+end
+
+def test_parses_incomplete_single_quote_string(_args, assert)
+  assert_parses_to(assert, "'hello", [
+    token(:string, "'hello", 0, 5)
+  ])
+end
+
+def test_parses_incomplete_string_with_code_after(_args, assert)
+  assert_parses_to(assert, '"hello + 1', [
+    token(:string, '"hello + 1', 0, 9)
+  ])
+end
+
+def test_parses_incomplete_string_with_escape(_args, assert)
+  assert_parses_to(assert, '"hello\\"', [
+    token(:string, '"hello\\"', 0, 7)
+  ])
+end
