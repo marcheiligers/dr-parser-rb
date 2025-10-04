@@ -37,6 +37,8 @@ class RubyParser
         parse_string_single
       elsif char == '%'
         parse_percent_literal
+      elsif char == '$'
+        parse_global
       elsif char == ':'
         # Check if this is :: (scope operator), part of namespace, hash syntax, or a symbol
         if @pos + 1 < @input.length
@@ -297,6 +299,30 @@ class RubyParser
                  end
 
     add_token(token_type, start_pos, @pos - 1)
+  end
+
+  def parse_global
+    start_pos = @pos
+    @pos += 1  # skip $
+
+    # Special globals like $$, $!, $?, $0-$9, etc.
+    if @pos < @input.length
+      char = @input[@pos]
+      if char == '$' || char == '!' || char == '?' || char == '&' || char == '`' ||
+         char == "'" || char == '+' || char == '~' || char == '=' || char == '/' ||
+         char == '\\' || char == ',' || char == ';' || char == '.' || char == '<' ||
+         char == '>' || char == '*' || char == '@' || char == ':' ||
+         (char >= '0' && char <= '9')
+        @pos += 1
+      elsif identifier_start?(char)
+        # Regular global like $gtk, $my_var
+        while @pos < @input.length && identifier_char?(@input[@pos])
+          @pos += 1
+        end
+      end
+    end
+
+    add_token(:global, start_pos, @pos - 1)
   end
 
   def parse_percent_literal

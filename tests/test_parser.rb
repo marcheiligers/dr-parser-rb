@@ -310,3 +310,45 @@ def test_parses_def_bang_method(_args, assert)
     token(:identifier, 'reset!', 4, 9)
   ])
 end
+
+def test_parses_global_variable(_args, assert)
+  assert_parses_to(assert, '$global', [
+    token(:global, '$global', 0, 6)
+  ])
+end
+
+def test_parses_global_with_underscore(_args, assert)
+  assert_parses_to(assert, '$my_global', [
+    token(:global, '$my_global', 0, 9)
+  ])
+end
+
+def test_parses_special_globals(_args, assert)
+  assert_parses_to(assert, '$0', [
+    token(:global, '$0', 0, 1)
+  ])
+end
+
+def test_parses_dollar_sign_globals(_args, assert)
+  assert_parses_to(assert, '$$', [
+    token(:global, '$$', 0, 1)
+  ])
+end
+
+def test_parses_global_in_expression(_args, assert)
+  assert_parses_to(assert, '$gtk.args', [
+    token(:global, '$gtk', 0, 3),
+    token(:operator, '.', 4, 4),
+    token(:identifier, 'args', 5, 8)
+  ])
+end
+
+def test_parses_global_assignment(_args, assert)
+  assert_parses_to(assert, '$count = 0', [
+    token(:global, '$count', 0, 5),
+    token(:whitespace, ' ', 6, 6),
+    token(:operator, '=', 7, 7),
+    token(:whitespace, ' ', 8, 8),
+    token(:number, '0', 9, 9)
+  ])
+end
