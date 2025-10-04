@@ -35,6 +35,8 @@ class RubyParser
         parse_string_double
       elsif char == "'"
         parse_string_single
+      elsif char == '%'
+        parse_percent_literal
       elsif char == ':'
         # Check if this is :: (scope operator), part of namespace, hash syntax, or a symbol
         if @pos + 1 < @input.length
@@ -303,6 +305,45 @@ class RubyParser
     end
 
     add_token(token_type, start_pos, @pos - 1)
+  end
+
+  def parse_percent_literal
+    start_pos = @pos
+    @pos += 1  # skip %
+
+    return parse_operator if @pos >= @input.length
+
+    # Get the type character (w, W, i, I, q, Q, r, s, x, etc.)
+    type_char = @input[@pos]
+    @pos += 1
+
+    return parse_operator if @pos >= @input.length
+
+    # Get the delimiter
+    delimiter = @input[@pos]
+    closing_delimiter = case delimiter
+                        when '[' then ']'
+                        when '(' then ')'
+                        when '{' then '}'
+                        when '<' then '>'
+                        else delimiter
+                        end
+
+    @pos += 1  # skip opening delimiter
+
+    # Find the closing delimiter
+    while @pos < @input.length
+      if @input[@pos] == '\\'
+        @pos += 2  # skip escape sequence
+      elsif @input[@pos] == closing_delimiter
+        @pos += 1  # include closing delimiter
+        break
+      else
+        @pos += 1
+      end
+    end
+
+    add_token(:array_literal, start_pos, @pos - 1)
   end
 
   def add_token(type, start_pos, end_pos)
