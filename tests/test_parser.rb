@@ -266,3 +266,47 @@ def test_parses_module_definition(_args, assert)
     token(:constant, 'MyModule', 7, 14)
   ])
 end
+
+def test_parses_predicate_method(_args, assert)
+  assert_parses_to(assert, 'empty?', [
+    token(:identifier, 'empty?', 0, 5)
+  ])
+end
+
+def test_parses_bang_method(_args, assert)
+  assert_parses_to(assert, 'save!', [
+    token(:identifier, 'save!', 0, 4)
+  ])
+end
+
+def test_parses_method_call_with_predicate(_args, assert)
+  assert_parses_to(assert, 'arr.empty?', [
+    token(:identifier, 'arr', 0, 2),
+    token(:operator, '.', 3, 3),
+    token(:identifier, 'empty?', 4, 9)
+  ])
+end
+
+def test_parses_method_call_with_bang(_args, assert)
+  assert_parses_to(assert, 'obj.save!', [
+    token(:identifier, 'obj', 0, 2),
+    token(:operator, '.', 3, 3),
+    token(:identifier, 'save!', 4, 8)
+  ])
+end
+
+def test_parses_def_predicate_method(_args, assert)
+  assert_parses_to(assert, 'def valid?', [
+    token(:keyword, 'def', 0, 2),
+    token(:whitespace, ' ', 3, 3),
+    token(:identifier, 'valid?', 4, 9)
+  ])
+end
+
+def test_parses_def_bang_method(_args, assert)
+  assert_parses_to(assert, 'def reset!', [
+    token(:keyword, 'def', 0, 2),
+    token(:whitespace, ' ', 3, 3),
+    token(:identifier, 'reset!', 4, 9)
+  ])
+end
