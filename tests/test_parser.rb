@@ -169,3 +169,53 @@ def test_parses_def_method(_args, assert)
     token(:identifier, 'foo', 4, 6)
   ])
 end
+
+def test_parses_decimal_number(_args, assert)
+  assert_parses_to(assert, '3.14', [
+    token(:number, '3.14', 0, 3)
+  ])
+end
+
+def test_parses_number_with_underscores(_args, assert)
+  assert_parses_to(assert, '1_000', [
+    token(:number, '1_000', 0, 4)
+  ])
+end
+
+def test_parses_large_number_with_underscores(_args, assert)
+  assert_parses_to(assert, '1_000_000', [
+    token(:number, '1_000_000', 0, 8)
+  ])
+end
+
+def test_parses_decimal_with_underscores(_args, assert)
+  assert_parses_to(assert, '1_234.567_89', [
+    token(:number, '1_234.567_89', 0, 11)
+  ])
+end
+
+def test_parses_method_call_on_number(_args, assert)
+  assert_parses_to(assert, '10.seconds', [
+    token(:number, '10', 0, 1),
+    token(:operator, '.', 2, 2),
+    token(:identifier, 'seconds', 3, 9)
+  ])
+end
+
+def test_parses_chained_method_calls_on_number(_args, assert)
+  assert_parses_to(assert, '10.seconds.ago', [
+    token(:number, '10', 0, 1),
+    token(:operator, '.', 2, 2),
+    token(:identifier, 'seconds', 3, 9),
+    token(:operator, '.', 10, 10),
+    token(:identifier, 'ago', 11, 13)
+  ])
+end
+
+def test_parses_number_ending_with_dot_space(_args, assert)
+  assert_parses_to(assert, '10. ', [
+    token(:number, '10', 0, 1),
+    token(:operator, '.', 2, 2),
+    token(:whitespace, ' ', 3, 3)
+  ])
+end

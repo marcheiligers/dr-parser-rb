@@ -83,9 +83,23 @@ class RubyParser
 
   def parse_number
     start_pos = @pos
-    while @pos < @input.length && (digit?(@input[@pos]) || @input[@pos] == '.')
-      @pos += 1
+
+    # Parse integer or decimal part with optional underscores
+    while @pos < @input.length
+      char = @input[@pos]
+      if digit?(char)
+        @pos += 1
+      elsif char == '_' && @pos + 1 < @input.length && digit?(@input[@pos + 1])
+        # Allow underscore only if followed by a digit
+        @pos += 1
+      elsif char == '.' && @pos + 1 < @input.length && digit?(@input[@pos + 1])
+        # Allow decimal point only if followed by a digit
+        @pos += 1
+      else
+        break
+      end
     end
+
     add_token(:number, start_pos, @pos - 1)
   end
 
