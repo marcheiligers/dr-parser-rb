@@ -160,15 +160,13 @@ class RubyParser
     end
 
     # Incomplete string - emit what we have
-    if @pos > string_start
-      add_token(:string, string_start, @pos - 1)
-    end
+    add_token(:string, string_start, @pos - 1) if @pos > string_start
   end
 
   def parse_interpolation
     # Emit interpolation start token
     interp_start = @pos
-    @pos += 2  # skip #{
+    @pos += 2 # skip #{
     add_token(:interpolation_start, interp_start, @pos - 1)
 
     # Track brace depth to handle nested braces
@@ -225,7 +223,7 @@ class RubyParser
 
   def parse_string_single
     start_pos = @pos
-    @pos += 1  # skip opening quote
+    @pos += 1 # skip opening quote
 
     while @pos < @input.length
       char = @input[@pos]
@@ -244,7 +242,7 @@ class RubyParser
 
   def parse_symbol
     start_pos = @pos
-    @pos += 1  # skip ':'
+    @pos += 1 # skip ':'
 
     # Symbol can be quoted or identifier-like
     if @pos < @input.length
@@ -252,15 +250,11 @@ class RubyParser
         # Quoted symbol like :"foo bar"
         quote = @input[@pos]
         @pos += 1
-        while @pos < @input.length && @input[@pos] != quote
-          @pos += 1
-        end
-        @pos += 1 if @pos < @input.length  # skip closing quote
+        @pos += 1 while @pos < @input.length && @input[@pos] != quote
+        @pos += 1 if @pos < @input.length # skip closing quote
       else
         # Regular symbol like :foo
-        while @pos < @input.length && identifier_char?(@input[@pos])
-          @pos += 1
-        end
+        @pos += 1 while @pos < @input.length && identifier_char?(@input[@pos])
       end
     end
 
@@ -289,32 +283,30 @@ class RubyParser
     start_pos = @pos
     first_char = @input[@pos]
 
-    while @pos < @input.length && identifier_char?(@input[@pos])
-      @pos += 1
-    end
+    @pos += 1 while @pos < @input.length && identifier_char?(@input[@pos])
 
     value = @input[start_pos..@pos - 1]
 
     # Determine token type: constant (starts with uppercase), keyword, or identifier
-    if first_char >= 'A' && first_char <= 'Z'
-      token_type = :constant
-    elsif KEYWORDS.include?(value)
-      token_type = :keyword
-    else
-      token_type = :identifier
-    end
+    token_type = if first_char >= 'A' && first_char <= 'Z'
+                   :constant
+                 elsif KEYWORDS.include?(value)
+                   :keyword
+                 else
+                   :identifier
+                 end
 
     add_token(token_type, start_pos, @pos - 1)
   end
 
   def parse_percent_literal
     start_pos = @pos
-    @pos += 1  # skip %
+    @pos += 1 # skip %
 
     return parse_operator if @pos >= @input.length
 
     # Get the type character (w, W, i, I, q, Q, r, s, x, etc.)
-    type_char = @input[@pos]
+    type_char = @input[@pos] # TODO: use type_char
     @pos += 1
 
     return parse_operator if @pos >= @input.length
@@ -329,14 +321,14 @@ class RubyParser
                         else delimiter
                         end
 
-    @pos += 1  # skip opening delimiter
+    @pos += 1 # skip opening delimiter
 
     # Find the closing delimiter
     while @pos < @input.length
       if @input[@pos] == '\\'
-        @pos += 2  # skip escape sequence
+        @pos += 2 # skip escape sequence
       elsif @input[@pos] == closing_delimiter
-        @pos += 1  # include closing delimiter
+        @pos += 1 # include closing delimiter
         break
       else
         @pos += 1
