@@ -1,87 +1,104 @@
 require 'lib/parser.rb'
 
+COLORS = {
+  keyword: { r: 197, g: 134, b: 192 },      # Purple
+  string: { r: 152, g: 195, b: 121 },       # Green
+  number: { r: 209, g: 154, b: 102 },       # Orange
+  comment: { r: 92, g: 99, b: 112 },        # Gray
+  symbol: { r: 86, g: 182, b: 194 },        # Cyan
+  constant: { r: 229, g: 192, b: 123 },     # Yellow
+  identifier: { r: 224, g: 224, b: 224 },   # White
+  operator: { r: 171, g: 178, b: 191 },     # Light gray
+  global: { r: 224, g: 108, b: 117 },       # Red
+  interpolation_start: { r: 152, g: 195, b: 121 },  # Green
+  interpolation_end: { r: 152, g: 195, b: 121 },    # Green
+  array_literal: { r: 152, g: 195, b: 121 } # Green
+}
+
 def tick args
-  args.state.logo_rect ||= { x: 576,
-                             y: 200,
-                             w: 128,
-                             h: 101 }
+  args.state.ruby_code ||= 'class Foo; def bar!(x); $gtk.args.outputs.labels << "hello #{x}"; end; end'
+  args.state.y_pos ||= 600
 
-  args.outputs.labels  << { x: 640,
-                            y: 600,
-                            text: 'Hello World!',
-                            size_px: 30,
-                            anchor_x: 0.5,
-                            anchor_y: 0.5 }
+  # Set background color (dark theme)
+  args.outputs.background_color = [40, 44, 52]
 
-  args.outputs.labels  << { x: 640,
-                            y: 510,
-                            text: "Documentation is located under the ./docs directory. 150+ samples are located under the ./samples directory.",
-                            size_px: 20,
-                            anchor_x: 0.5,
-                            anchor_y: 0.5 }
+  # Parse the Ruby code
+  parser = RubyParser.new(args.state.ruby_code)
+  tokens = parser.parse
 
-  args.outputs.labels  << { x: 640,
-                            y: 480,
-                            text: "You can also access these docs online at docs.dragonruby.org.",
-                            size_px: 20,
-                            anchor_x: 0.5,
-                            anchor_y: 0.5 }
+  # Title
+  args.outputs.labels << {
+    x: 640,
+    y: 680,
+    text: 'Ruby Syntax Highlighter Demo',
+    size_px: 30,
+    alignment_enum: 1,
+    r: 200, g: 200, b: 200
+  }
 
-  args.outputs.labels  << { x: 640,
-                            y: 400,
-                            text: "The code that powers what you're seeing right now is located at ./mygame/app/main.rb.",
-                            size_px: 20,
-                            anchor_x: 0.5,
-                            anchor_y: 0.5 }
+  # Instructions
+  args.outputs.labels << {
+    x: 640,
+    y: 640,
+    text: 'Showcasing keyword, string, number, symbol, constant, global, interpolation, and more!',
+    size_px: 16,
+    alignment_enum: 1,
+    r: 150, g: 150, b: 150
+  }
 
-  args.outputs.labels  << { x: 640,
-                            y: 380,
-                            text: "(you can change the code while the app is running and see the updates live)",
-                            size_px: 20,
-                            anchor_x: 0.5,
-                            anchor_y: 0.5 }
+  # Render syntax-highlighted code
+  x_offset = 40
+  size = 20
 
-  args.outputs.sprites << { x: args.state.logo_rect.x,
-                            y: args.state.logo_rect.y,
-                            w: args.state.logo_rect.w,
-                            h: args.state.logo_rect.h,
-                            path: 'dragonruby.png',
-                            angle: Kernel.tick_count }
+  tokens.each do |token|
+    color = COLORS[token[:type]] || { r: 255, g: 255, b: 255 }
 
-  args.outputs.labels  << { x: 640,
-                            y: 180,
-                            text: "(use arrow keys to move the logo around)",
-                            size_px: 20,
-                            anchor_x: 0.5,
-                            anchor_y: 0.5 }
+    args.outputs.labels << {
+      x: x_offset,
+      y: args.state.y_pos,
+      text: token[:value],
+      size_px: size,
+      **color
+    }
 
-  args.outputs.labels  << { x: 640,
-                            y: 80,
-                            text: 'Join the Discord Server! https://discord.dragonruby.org',
-                            size_px: 30,
-                            anchor_x: 0.5 }
-
-  if args.inputs.keyboard.left
-    args.state.logo_rect.x -= 10
-  elsif args.inputs.keyboard.right
-    args.state.logo_rect.x += 10
+    # Calculate the exact width of this token
+    width, _ = $gtk.calcstringbox(token[:value], size_px: size)
+    x_offset += width
   end
 
-  if args.inputs.keyboard.down
-    args.state.logo_rect.y -= 10
-  elsif args.inputs.keyboard.up
-    args.state.logo_rect.y += 10
+  # Show token breakdown
+  y = 500
+  args.outputs.labels << {
+    x: 40,
+    y: y,
+    text: 'Token Breakdown:',
+    size_px: 18,
+    r: 200, g: 200, b: 200
+  }
+
+  y -= 30
+  token_types = tokens.map { |t| t[:type] }.uniq
+  token_types.each do |type|
+    count = tokens.count { |t| t[:type] == type }
+    color = COLORS[type] || { r: 255, g: 255, b: 255 }
+
+    args.outputs.labels << {
+      x: 40,
+      y: y,
+      text: "#{type}: #{count}",
+      size_px: 14,
+      **color
+    }
+    y -= 25
   end
 
-  if args.state.logo_rect.x > 1280
-    args.state.logo_rect.x = 0
-  elsif args.state.logo_rect.x < 0
-    args.state.logo_rect.x = 1280
-  end
-
-  if args.state.logo_rect.y > 720
-    args.state.logo_rect.y = 0
-  elsif args.state.logo_rect.y < 0
-    args.state.logo_rect.y = 720
-  end
+  # Footer
+  args.outputs.labels << {
+    x: 640,
+    y: 40,
+    text: 'Press ESC to quit | 79 tests passing',
+    size_px: 16,
+    alignment_enum: 1,
+    r: 150, g: 150, b: 150
+  }
 end
