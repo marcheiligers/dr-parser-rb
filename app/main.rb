@@ -23,8 +23,8 @@ def tick args
   args.outputs.background_color = [40, 44, 52]
 
   # Parse the Ruby code
-  parser = RubyParser.new(args.state.ruby_code)
-  tokens = parser.parse
+  parser = RubyLineParser.new(args.state.ruby_code).parse
+  tokens = parser.tokens
 
   # Title
   args.outputs.labels << {

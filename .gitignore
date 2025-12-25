@@ -3,6 +3,7 @@
 
 # DragonRuby
 logs/
+errors/
 game_state*.txt
 
 # Release
