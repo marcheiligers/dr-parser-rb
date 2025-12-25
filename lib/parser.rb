@@ -51,6 +51,7 @@ class RubyLineParser
           when :for then continue_for
           when :do_block then continue_do_block
           when :begin then continue_begin
+          when :heredoc then continue_heredoc
           else raise "Unexpected Frame #{@stack.last.type}"
         end
       end
@@ -91,6 +92,13 @@ class RubyLineParser
         else
           parse_symbol
         end
+      else
+        parse_operator
+      end
+    elsif char == '<' && @pos + 1 < @input.length && @input[@pos + 1] == '<'
+      # Check for heredoc
+      if heredoc_start?
+        start_heredoc
       else
         parse_operator
       end
@@ -431,6 +439,31 @@ class RubyLineParser
     while @pos < @input.length
       start_parse
       return if @stack.empty? || @stack.last.type != :begin
+    end
+  end
+
+  def continue_heredoc
+    # Get delimiter and modifier from frame
+    delimiter = @stack.last.name
+    modifier = @stack.last.depth  # 0=none, 1=-, 2=~
+
+    # Check if current line matches delimiter (with or without indentation based on modifier)
+    line_to_check = case modifier
+                    when 1, 2  # <<- or <<~ allow indented closing delimiter
+                      @input.strip
+                    else  # << requires exact match
+                      @input.chomp  # Remove trailing newline but keep leading whitespace
+                    end
+
+    if line_to_check == delimiter
+      # Closing delimiter found
+      add_token(:heredoc_end, 0, @input.length - 1)
+      @stack.pop
+      @pos = @input.length  # Consume the entire line
+    else
+      # Heredoc content line
+      add_token(:heredoc_line, 0, @input.length - 1)
+      @pos = @input.length  # Consume the entire line
     end
   end
 
@@ -804,6 +837,71 @@ class RubyLineParser
   def inside_bracket_frame?
     return false if @stack.empty?
     [:array, :hash, :paren].include?(@stack.last.type)
+  end
+
+  def heredoc_start?
+    # After <<, check if what follows looks like a heredoc delimiter
+    # Could be: <<DELIMITER, <<-DELIMITER, <<~DELIMITER
+    # Could be quoted: <<"DELIMITER", <<'DELIMITER'
+    pos = @pos + 2  # Skip <<
+
+    # Check for - or ~ modifier
+    if pos < @input.length && (@input[pos] == '-' || @input[pos] == '~')
+      pos += 1
+    end
+
+    # Check for delimiter start
+    return false if pos >= @input.length
+
+    char = @input[pos]
+    # Delimiter can start with letter, underscore, or quote
+    identifier_start?(char) || char == '"' || char == "'"
+  end
+
+  def start_heredoc
+    start_pos = @pos
+    @pos += 2  # skip <<
+
+    # Check for - or ~ modifier
+    indent_modifier = nil
+    if @pos < @input.length && (@input[@pos] == '-' || @input[@pos] == '~')
+      indent_modifier = @input[@pos]
+      @pos += 1
+    end
+
+    # Read delimiter
+    delimiter_start = @pos
+    delimiter = ''
+
+    if @pos < @input.length && (@input[@pos] == '"' || @input[@pos] == "'")
+      # Quoted delimiter
+      quote = @input[@pos]
+      @pos += 1
+      while @pos < @input.length && @input[@pos] != quote
+        delimiter += @input[@pos]
+        @pos += 1
+      end
+      @pos += 1 if @pos < @input.length  # Skip closing quote
+    else
+      # Unquoted delimiter - read identifier characters only
+      while @pos < @input.length && identifier_char?(@input[@pos])
+        delimiter += @input[@pos]
+        @pos += 1
+      end
+    end
+
+    # Push heredoc frame - store delimiter in name, modifier in depth (reusing fields)
+    # We'll use depth to store the modifier: 0=none, 1=-, 2=~
+    depth_value = case indent_modifier
+                  when '-' then 1
+                  when '~' then 2
+                  else 0
+                  end
+
+    @stack << Frame.new(:heredoc, depth_value, delimiter)
+
+    # Token for heredoc start
+    add_token(:heredoc_start, start_pos, @pos - 1)
   end
 
   def update_last_significant_token(char)
