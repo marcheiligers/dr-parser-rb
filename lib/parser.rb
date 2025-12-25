@@ -24,6 +24,7 @@ class RubyLineParser
     @stack = stack.dup
     @last_significant_token = nil
     @prev_significant_token = nil
+    @seen_non_whitespace = false  # Track if we've seen non-whitespace on this line
   end
 
   # stack can be: array (various types), string, heredocdefine sceptic, parameter list, hash, lambda?
@@ -39,6 +40,17 @@ class RubyLineParser
           when :array then continue_array
           when :hash then continue_hash
           when :paren then continue_paren
+          when :def then continue_def
+          when :class then continue_class
+          when :module then continue_module
+          when :if then continue_if
+          when :unless then continue_unless
+          when :case then continue_case
+          when :while then continue_while
+          when :until then continue_until
+          when :for then continue_for
+          when :do_block then continue_do_block
+          when :begin then continue_begin
           else raise "Unexpected Frame #{@stack.last.type}"
         end
       end
@@ -318,6 +330,110 @@ class RubyLineParser
     end
   end
 
+  def continue_def
+    while @pos < @input.length
+      char = @input[@pos]
+
+      # Check for keywords that might nest or close this frame
+      if identifier_start?(char)
+        # This will parse the identifier/keyword and handle_keyword_frame will manage depth
+        start_parse
+        # Check if frame was popped (stack empty or different frame type)
+        return if @stack.empty? || @stack.last.type != :def
+      else
+        start_parse
+      end
+    end
+  end
+
+  def continue_class
+    while @pos < @input.length
+      char = @input[@pos]
+
+      # Check for keywords that might nest or close this frame
+      if identifier_start?(char)
+        # This will parse the identifier/keyword and handle_keyword_frame will manage depth
+        start_parse
+        # Check if frame was popped (stack empty or different frame type)
+        return if @stack.empty? || @stack.last.type != :class
+      else
+        start_parse
+      end
+    end
+  end
+
+  def continue_module
+    while @pos < @input.length
+      char = @input[@pos]
+
+      # Check for keywords that might nest or close this frame
+      if identifier_start?(char)
+        # This will parse the identifier/keyword and handle_keyword_frame will manage depth
+        start_parse
+        # Check if frame was popped (stack empty or different frame type)
+        return if @stack.empty? || @stack.last.type != :module
+      else
+        start_parse
+      end
+    end
+  end
+
+  def continue_if
+    while @pos < @input.length
+      start_parse
+      return if @stack.empty? || @stack.last.type != :if
+    end
+  end
+
+  def continue_unless
+    while @pos < @input.length
+      start_parse
+      return if @stack.empty? || @stack.last.type != :unless
+    end
+  end
+
+  def continue_case
+    while @pos < @input.length
+      start_parse
+      return if @stack.empty? || @stack.last.type != :case
+    end
+  end
+
+  def continue_while
+    while @pos < @input.length
+      start_parse
+      return if @stack.empty? || @stack.last.type != :while
+    end
+  end
+
+  def continue_until
+    while @pos < @input.length
+      start_parse
+      return if @stack.empty? || @stack.last.type != :until
+    end
+  end
+
+  def continue_for
+    while @pos < @input.length
+      start_parse
+      return if @stack.empty? || @stack.last.type != :for
+    end
+  end
+
+  def continue_do_block
+    while @pos < @input.length
+      start_parse
+      return if @stack.empty? || @stack.last.type != :do_block
+    end
+  end
+
+  def continue_begin
+    while @pos < @input.length
+      start_parse
+      return if @stack.empty? || @stack.last.type != :begin
+    end
+  end
+
   def parse_string_single
     start_pos = @pos
     @pos += 1 # skip opening quote
@@ -433,6 +549,11 @@ class RubyLineParser
 
     add_token(token_type, start_pos, @pos - 1)
 
+    # Handle keyword frames (only when not inside string/interpolation/bracket)
+    if token_type == :keyword && !inside_string_or_interpolation? && !inside_bracket_frame?
+      handle_keyword_frame(value)
+    end
+
     # Track identifier for hash vs block detection
     if token_type == :identifier
       @prev_significant_token = @last_significant_token
@@ -506,6 +627,134 @@ class RubyLineParser
   def add_token(type, start_pos, end_pos)
     value = @input[start_pos..end_pos]
     @tokens << { type: type, value: value, start: start_pos, end: end_pos }
+
+    # Track non-whitespace tokens
+    @seen_non_whitespace = true unless type == :whitespace
+  end
+
+  def modifier_keyword?(keyword)
+    # Modifier keywords appear after other tokens on the same line
+    # Block keywords appear at line start (possibly after whitespace)
+    # Check if there are non-whitespace tokens before this keyword
+    # (the keyword token has already been added to @tokens, so check all tokens except the last)
+    @tokens[0..-2].any? { |t| t[:type] != :whitespace }
+  end
+
+  # Helper methods for keyword frame management
+
+  def handle_keyword_frame(keyword)
+    # Handle special keywords that don't start/end frames
+    case keyword
+    when 'elsif', 'else'
+      # These continue the current if/unless/case frame, don't push/pop
+      return
+    when 'when'
+      # Continues case frame
+      return
+    when 'rescue', 'ensure'
+      # Continues begin frame
+      return
+    when 'then'
+      # Optional part of if/case/when, ignore
+      return
+    end
+
+    # Handle the keyword to push a new frame (or pop for 'end')
+    case keyword
+    when 'def'
+      # Peek ahead to get method name
+      method_name = peek_next_identifier
+      @stack << Frame.new(:def, 0, method_name)
+    when 'class'
+      # Peek ahead to get class name
+      class_name = peek_next_constant
+      @stack << Frame.new(:class, 0, class_name)
+    when 'module'
+      # Peek ahead to get module name
+      module_name = peek_next_constant
+      @stack << Frame.new(:module, 0, module_name)
+    when 'if'
+      return if modifier_keyword?(keyword)
+      @stack << Frame.new(:if, 0)
+    when 'unless'
+      return if modifier_keyword?(keyword)
+      @stack << Frame.new(:unless, 0)
+    when 'case'
+      @stack << Frame.new(:case, 0)
+    when 'while'
+      return if modifier_keyword?(keyword)
+      @stack << Frame.new(:while, 0)
+    when 'until'
+      return if modifier_keyword?(keyword)
+      @stack << Frame.new(:until, 0)
+    when 'for'
+      @stack << Frame.new(:for, 0)
+    when 'begin'
+      @stack << Frame.new(:begin, 0)
+    when 'do'
+      @stack << Frame.new(:do_block, 0)
+    when 'end'
+      pop_end_frame
+    end
+  end
+
+  def peek_next_identifier
+    # Skip whitespace to find next identifier
+    saved_pos = @pos
+    @pos += 1 while @pos < @input.length && whitespace?(@input[@pos])
+
+    return nil if @pos >= @input.length
+
+    # Check if next token is an identifier
+    if identifier_start?(@input[@pos])
+      start_pos = @pos
+      @pos += 1 while @pos < @input.length && identifier_char?(@input[@pos])
+      name = @input[start_pos..@pos - 1]
+      @pos = saved_pos  # Restore position
+      return name
+    end
+
+    @pos = saved_pos  # Restore position
+    nil
+  end
+
+  def peek_next_constant
+    # Skip whitespace to find next constant
+    saved_pos = @pos
+    @pos += 1 while @pos < @input.length && whitespace?(@input[@pos])
+
+    return nil if @pos >= @input.length
+
+    # Check if next token is a constant (starts with uppercase)
+    char = @input[@pos]
+    if char >= 'A' && char <= 'Z'
+      start_pos = @pos
+      @pos += 1 while @pos < @input.length && identifier_char?(@input[@pos])
+      name = @input[start_pos..@pos - 1]
+      @pos = saved_pos  # Restore position
+      return name
+    end
+
+    @pos = saved_pos  # Restore position
+    nil
+  end
+
+  def pop_end_frame
+    # Find topmost frame that expects 'end'
+    return if @stack.empty?
+
+    frame = @stack.last
+
+    # Keywords that pair with 'end'
+    end_keywords = [:def, :class, :module, :if, :unless, :case, :while, :until, :for, :do_block, :begin]
+
+    if end_keywords.include?(frame.type)
+      if frame.depth > 0
+        frame.depth -= 1
+      else
+        @stack.pop
+      end
+    end
   end
 
   # Helper methods for bracket frame management
