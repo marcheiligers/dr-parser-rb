@@ -22,6 +22,8 @@ class RubyLineParser
     @pos = 0
     @tokens = []
     @stack = stack.dup
+    @last_significant_token = nil
+    @prev_significant_token = nil
   end
 
   # stack can be: array (various types), string, heredocdefine sceptic, parameter list, hash, lambda?
@@ -34,6 +36,9 @@ class RubyLineParser
         case @stack.last.type
           when :string_double then continue_string_double(0)
           when :interpolation then continue_interpolation(0)
+          when :array then continue_array
+          when :hash then continue_hash
+          when :paren then continue_paren
           else raise "Unexpected Frame #{@stack.last.type}"
         end
       end
@@ -198,29 +203,25 @@ class RubyLineParser
     interp_start = @pos
     @pos += 2 # skip #{
     add_token(:interpolation_start, interp_start, @pos - 1)
-    @stack << Frame.new(:interpolation)
+    @stack << Frame.new(:interpolation, 1)
     continue_interpolation(interp_start)
   end
 
-  # TODO: I think brace_depth goes away when anything else using braces, like hashes, also becomes a mode on the stack
-  def continue_interpolation(interp_start, brace_depth = 1)
-    # Track brace depth to handle nested braces
-    brace_depth = 1
-
+  def continue_interpolation(interp_start = 0)
     # Parse tokens inside interpolation
-    while @pos < @input.length && brace_depth > 0
+    while @pos < @input.length && @stack.last.depth > 0
       char = @input[@pos]
 
       if char == '{'
-        brace_depth += 1
+        @stack.last.depth += 1
         parse_operator
       elsif char == '}'
-        brace_depth -= 1
-        if brace_depth == 0
+        @stack.last.depth -= 1
+        if @stack.last.depth == 0
           # Emit interpolation end token
           add_token(:interpolation_end, @pos, @pos)
           @pos += 1
-          raise "Expected :string_double but got #{@stack.last.type}" unless @stack.last.type == :interpolation
+          raise "Expected :interpolation but got #{@stack.last.type}" unless @stack.last.type == :interpolation
 
           @stack.pop
           return
@@ -256,6 +257,63 @@ class RubyLineParser
         parse_identifier
       else
         @pos += 1
+      end
+    end
+  end
+
+  def continue_array
+    while @pos < @input.length
+      char = @input[@pos]
+
+      case char
+      when '['
+        @stack.last.depth += 1
+        start_parse
+      when ']'
+        # Let parse_operator handle depth decrement and popping via pop_bracket_frame
+        start_parse
+        # Check if frame was popped (stack empty or different frame type)
+        return if @stack.empty? || @stack.last.type != :array
+      else
+        start_parse
+      end
+    end
+  end
+
+  def continue_hash
+    while @pos < @input.length
+      char = @input[@pos]
+
+      case char
+      when '{'
+        @stack.last.depth += 1
+        start_parse
+      when '}'
+        # Let parse_operator handle depth decrement and popping via pop_bracket_frame_smart
+        start_parse
+        # Check if frame was popped (stack empty or different frame type)
+        return if @stack.empty? || @stack.last.type != :hash
+      else
+        start_parse
+      end
+    end
+  end
+
+  def continue_paren
+    while @pos < @input.length
+      char = @input[@pos]
+
+      case char
+      when '('
+        @stack.last.depth += 1
+        start_parse
+      when ')'
+        # Let parse_operator handle depth decrement and popping via pop_bracket_frame
+        start_parse
+        # Check if frame was popped (stack empty or different frame type)
+        return if @stack.empty? || @stack.last.type != :paren
+      else
+        start_parse
       end
     end
   end
@@ -309,13 +367,51 @@ class RubyLineParser
       if OPERATORS.include?(two_char)
         @pos += 2
         add_token(:operator, start_pos, @pos - 1)
+        update_last_significant_token(two_char)
         return
       end
     end
 
     # Single character operator
+    char = @input[@pos]
     @pos += 1
     add_token(:operator, start_pos, @pos - 1)
+
+    # Handle bracket frame push/pop (only when not inside string/interpolation)
+    unless inside_string_or_interpolation?
+      case char
+      when '['
+        # Only push if not already inside an array frame
+        push_array_frame unless @stack.last&.type == :array
+        @last_significant_token = :bracket_open
+      when ']'
+        pop_bracket_frame(:array)
+      when '{'
+        # Only push if not already inside a hash frame
+        unless @stack.last&.type == :hash
+          if block_context?
+            # For Phase 3: push_block_frame
+            # For now, treat as hash
+            push_hash_frame
+          else
+            push_hash_frame
+          end
+        end
+        @last_significant_token = :brace_open
+      when '}'
+        pop_bracket_frame_smart
+      when '('
+        # Only push if not already inside a paren frame
+        push_paren_frame unless @stack.last&.type == :paren
+        @last_significant_token = :paren_open
+      when ')'
+        pop_bracket_frame(:paren)
+      else
+        update_last_significant_token(char)
+      end
+    else
+      update_last_significant_token(char)
+    end
   end
 
   def parse_identifier
@@ -336,6 +432,12 @@ class RubyLineParser
                  end
 
     add_token(token_type, start_pos, @pos - 1)
+
+    # Track identifier for hash vs block detection
+    if token_type == :identifier
+      @prev_significant_token = @last_significant_token
+      @last_significant_token = :identifier
+    end
   end
 
   def parse_global
@@ -404,6 +506,69 @@ class RubyLineParser
   def add_token(type, start_pos, end_pos)
     value = @input[start_pos..end_pos]
     @tokens << { type: type, value: value, start: start_pos, end: end_pos }
+  end
+
+  # Helper methods for bracket frame management
+
+  def push_array_frame
+    @stack << Frame.new(:array, 1)
+  end
+
+  def push_hash_frame
+    @stack << Frame.new(:hash, 1)
+  end
+
+  def push_paren_frame
+    @stack << Frame.new(:paren, 1)
+  end
+
+  def pop_bracket_frame(expected_type)
+    return unless @stack.last
+
+    if @stack.last.type == expected_type
+      @stack.last.depth -= 1
+      @stack.pop if @stack.last.depth == 0
+    end
+  end
+
+  def pop_bracket_frame_smart
+    # Pops either :hash or :do_block frame (for } closer)
+    return unless @stack.last
+
+    if [:hash, :do_block].include?(@stack.last.type)
+      @stack.last.depth -= 1
+      @stack.pop if @stack.last.depth == 0
+    end
+  end
+
+  def block_context?
+    # After identifier without parens, { is likely a block
+    @last_significant_token == :identifier &&
+      ![:paren_open, :comma, :bracket_open, :hash_rocket, :colon].include?(@prev_significant_token)
+  end
+
+  def inside_string_or_interpolation?
+    return false if @stack.empty?
+    [:string_double, :interpolation].include?(@stack.last.type)
+  end
+
+  def inside_bracket_frame?
+    return false if @stack.empty?
+    [:array, :hash, :paren].include?(@stack.last.type)
+  end
+
+  def update_last_significant_token(char)
+    @prev_significant_token = @last_significant_token
+
+    case char
+    when ',' then @last_significant_token = :comma
+    when '=>' then @last_significant_token = :hash_rocket
+    when ':' then @last_significant_token = :colon
+    when '=' then @last_significant_token = :assignment
+    when '.' then @last_significant_token = :dot
+    else
+      # Other operators don't affect hash vs block detection
+    end
   end
 end
 

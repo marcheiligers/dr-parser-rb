@@ -1,3 +1,5 @@
 require_relative 'test_parser'
 require_relative 'test_strings'
 require_relative 'test_arrays'
+require_relative 'test_hashes'
+require_relative 'test_parens'
