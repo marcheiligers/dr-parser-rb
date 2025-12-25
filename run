@@ -1,2 +1,2 @@
 cd ..
-./dragonruby dr-parse-rb
+./dragonruby dr-parser-rb

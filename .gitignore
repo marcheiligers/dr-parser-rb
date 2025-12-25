@@ -4,3 +4,9 @@
 # DragonRuby
 logs/
 game_state*.txt
+
+# Release
+parser.rb
+
+# A little local file I use to test if some evil syntax will work with Ruby or mRuby
+foo.rb

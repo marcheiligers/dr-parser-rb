@@ -110,3 +110,35 @@ def test_parses_interpolation_at_start(_args, assert)
     token(:string, '"', 5, 5)
   ])
 end
+
+# ---- Test stack --------------------------------------------------------------
+
+def test_stack_empty_for_a_full_string(_args, assert)
+  parser = RubyLineParser.new('"hello, world"').parse
+  assert.true!(parser.stack.empty?)
+end
+
+def test_stack_empty_for_a_full_string_with_interpolation(_args, assert)
+  parser = RubyLineParser.new('"hello, #{"world"}"').parse
+  assert.true!(parser.stack.empty?)
+end
+
+def test_stack_string_double_for_incomplete_string(_args, assert)
+  parser = RubyLineParser.new('"hello, world').parse
+  assert.equal!(parser.stack.map(&:type), [:string_double])
+end
+
+def test_stack_string_double_for_incomplete_string_in_interpolation(_args, assert)
+  parser = RubyLineParser.new('"hello, #{"world').parse
+  assert.equal!(parser.stack.map(&:type), [:string_double, :interpolation, :string_double])
+end
+
+def test_stack_for_two_line_horror_string_with_interpolation(_args, assert)
+  parser1 = RubyLineParser.new('"hello, #{"world').parse
+  assert.equal!(parser1.stack.map(&:type), [:string_double, :interpolation, :string_double])
+
+  parser2 = RubyLineParser.new('"}"', parser1.stack).parse
+  assert.true!(parser2.stack.empty?)
+
+  assert.false!(parser1.stack.empty?) # We dup the stack
+end

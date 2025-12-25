@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+
+rm parser.rb 2>/dev/null | true
+
+export VERSION=$(grep "^## " CHANGELOG.md | head -1 | grep -o '\[.*\]' | tr -d '[]')
+
+echo "# dr-parse-rb $VERSION" >> parser.rb
+echo "# MIT Licensed" >> parser.rb
+echo "# Copyright (c) 2025 Marc Heiligers" >> parser.rb
+echo "# See https://github.com/marcheiligers/dr-parse-rb" >> parser.rb
+echo "" >> parser.rb
+cat lib/parser.rb >> parser.rb
+
+echo "Created parser.rb version $VERSION"

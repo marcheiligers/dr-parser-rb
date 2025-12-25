@@ -1,7 +1,26 @@
-cd ..
-
 # Use provided test file or default to all tests
 TEST_FILE=${1:-tests/tests.rb}
+SINGLE_TEST=""
+
+# Check if a specific test is requested by line number (file:line format)
+if [[ "$1" == *":"* ]]; then
+  IFS=':' read -r FILE_PART LINE_NUM <<< "$1"
+  TEST_FILE="$FILE_PART"
+
+  # We'll need to resolve the file path first, then find the test
+  # This will be done after the file path normalization below
+
+# Check if a specific test is requested by name (file#test format)
+elif [[ "$1" == *"#"* ]]; then
+  IFS='#' read -r FILE_PART TEST_PART <<< "$1"
+  TEST_FILE="$FILE_PART"
+  SINGLE_TEST="$TEST_PART"
+
+  # Add test_ prefix to test name if missing
+  if [[ "$SINGLE_TEST" != test_* ]]; then
+    SINGLE_TEST="test_$SINGLE_TEST"
+  fi
+fi
 
 # If a specific test file is provided, ensure it has the .rb extension and is in tests/ directory
 if [ "$1" ]; then
@@ -9,11 +28,56 @@ if [ "$1" ]; then
   if [[ "$TEST_FILE" != tests/* ]]; then
     TEST_FILE="tests/$TEST_FILE"
   fi
-  
+
+  # Extract the basename and check if it starts with test_
+  BASENAME="${TEST_FILE#tests/}"
+  if [[ "$BASENAME" != test_* ]]; then
+    TEST_FILE="tests/test_$BASENAME"
+  fi
+
   # If the file doesn't end with .rb, add it
   if [[ "$TEST_FILE" != *.rb ]]; then
     TEST_FILE="$TEST_FILE.rb"
   fi
 fi
 
-SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy ./dragonruby dr-parse-rb --test "$TEST_FILE" --no-tick
+# Store the full path to the test file before changing directory
+FULL_TEST_FILE="$(pwd)/$TEST_FILE"
+
+# If line number was specified, find the test at that line
+if [ -n "$LINE_NUM" ]; then
+  # Read the file up to the specified line and find the last def test_ occurrence
+  SINGLE_TEST=$(head -n "$LINE_NUM" "$FULL_TEST_FILE" | grep "^def test_" | tail -1 | sed -E 's/def (test_[a-zA-Z0-9_]+).*/\1/')
+
+  if [ -z "$SINGLE_TEST" ]; then
+    echo "Error: No test found at or before line $LINE_NUM in $TEST_FILE"
+    exit 1
+  fi
+fi
+
+cd ..
+
+# Function to restore the test file
+restore_file() {
+  if [ -n "$SINGLE_TEST" ] && [ -f "${FULL_TEST_FILE}.backup" ]; then
+    mv "${FULL_TEST_FILE}.backup" "$FULL_TEST_FILE"
+  fi
+}
+
+# Set trap to restore file on exit or interrupt
+trap restore_file EXIT INT TERM
+
+# If a single test is requested, modify the file to disable other tests
+if [ -n "$SINGLE_TEST" ]; then
+  # Create backup
+  cp "$FULL_TEST_FILE" "${FULL_TEST_FILE}.backup"
+
+  # Rename all test_ methods to xtest_
+  sed -i '' 's/def test_/def xtest_/g' "$FULL_TEST_FILE"
+
+  # Rename the target test back to test_
+  TARGET_TEST="${SINGLE_TEST#test_}"
+  sed -i '' "s/def xtest_${TARGET_TEST}/def test_${TARGET_TEST}/g" "$FULL_TEST_FILE"
+fi
+
+SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy ./dragonruby dr-parser-rb --test "$TEST_FILE" --no-tick

@@ -1,6 +1,6 @@
 def assert_parses_to(assert, input, expected_tokens, message = nil)
-  parser = RubyParser.new(input)
-  actual = parser.parse
+  parser = RubyLineParser.new(input)
+  actual = parser.parse.tokens
 
   error_msg = message || <<~EOS
     Failed to parse: '#{input}'

@@ -1,9 +1,9 @@
-class RubyParser
+class RubyLineParser
   OPERATORS = [
     '=>', '==', '!=', '<=', '>=', '<<', '>>', '&&', '||',
     '+', '-', '*', '/', '%', '=', '<', '>', '!', '&', '|', '^', '~',
     '(', ')', '[', ']', '{', '}', ',', '.', ':', ';', '?'
-  ]
+  ].freeze
 
   KEYWORDS = [
     'alias', 'and', 'begin', 'break', 'case', 'class', 'def', 'defined?',
@@ -11,60 +11,81 @@ class RubyParser
     'module', 'next', 'nil', 'not', 'or', 'redo', 'rescue', 'retry',
     'return', 'self', 'super', 'then', 'true', 'undef', 'unless', 'until',
     'when', 'while', 'yield'
-  ]
+  ].freeze
 
-  def initialize(input)
+  attr_reader :tokens, :stack
+
+  Frame = Struct.new(:type, :depth, :name)
+
+  def initialize(input, stack = [])
     @input = input
     @pos = 0
     @tokens = []
+    @stack = stack.dup
   end
 
-  def parse
-    return [] if @input.nil? || @input.empty?
+  # stack can be: array (various types), string, heredocdefine sceptic, parameter list, hash, lambda?
 
+  def parse # continue_parse
     while @pos < @input.length
-      char = @input[@pos]
-
-      if whitespace?(char)
-        parse_whitespace
-      elsif digit?(char)
-        parse_number
-      elsif char == '#'
-        parse_comment
-      elsif char == '"'
-        parse_string_double
-      elsif char == "'"
-        parse_string_single
-      elsif char == '%'
-        parse_percent_literal
-      elsif char == '$'
-        parse_global
-      elsif char == ':'
-        # Check if this is :: (scope operator), part of namespace, hash syntax, or a symbol
-        if @pos + 1 < @input.length
-          next_char = @input[@pos + 1]
-          if next_char == ':' || (next_char >= 'A' && next_char <= 'Z') || whitespace?(next_char) || next_char == '}'
-            # :: or :Constant or hash syntax (a: value) - treat as operator
-            parse_operator
-          else
-            parse_symbol
-          end
-        else
-          parse_operator
-        end
-      elsif operator_start?(char)
-        parse_operator
-      elsif identifier_start?(char)
-        parse_identifier
+      if @stack.empty?
+        start_parse
       else
-        @pos += 1
+        case @stack.last.type
+          when :string_double then continue_string_double(0)
+          when :interpolation then continue_interpolation(0)
+          else raise "Unexpected Frame #{@stack.last.type}"
+        end
       end
     end
 
-    @tokens
+    self
   end
 
   private
+
+  def start_parse
+    return self if @input.nil? || @input.empty?
+
+    char = @input[@pos]
+
+    if whitespace?(char)
+      parse_whitespace
+    elsif digit?(char)
+      parse_number
+    elsif char == '#'
+      parse_comment
+    elsif char == '"'
+      start_string_double
+    elsif char == "'"
+      parse_string_single
+    elsif char == '%'
+      parse_percent_literal
+    elsif char == '$'
+      parse_global
+    elsif char == ':'
+      # Check if this is :: (scope operator), part of namespace, hash syntax, or a symbol
+      if @pos + 1 < @input.length
+        next_char = @input[@pos + 1]
+        # TODO: This looks weird. Thanks, Claude
+        if next_char == ':' || (next_char >= 'A' && next_char <= 'Z') || whitespace?(next_char) || next_char == '}'
+          # :: or :Constant or hash syntax (a: value) - treat as operator
+          parse_operator
+        else
+          parse_symbol
+        end
+      else
+        parse_operator
+      end
+    elsif operator_start?(char)
+      parse_operator
+    elsif identifier_start?(char)
+      parse_identifier
+    else
+      # TODO: Umm, we're just ignoring stuff we don't recognize
+      @pos += 1
+    end
+  end
 
   def whitespace?(char)
     char == ' ' || char == "\t" || char == "\n" || char == "\r"
@@ -126,10 +147,14 @@ class RubyParser
     add_token(:comment, start_pos, @pos - 1)
   end
 
-  def parse_string_double
+  def start_string_double
+    @stack << Frame.new(:string_double)
     string_start = @pos
-    @pos += 1  # skip opening quote
+    @pos += 1 # skip opening quote
+    continue_string_double(string_start)
+  end
 
+  def continue_string_double(string_start)
     while @pos < @input.length
       char = @input[@pos]
 
@@ -147,7 +172,7 @@ class RubyParser
         end
 
         # Parse interpolation
-        parse_interpolation
+        start_interpolation
 
         # Continue with next string segment
         string_start = @pos
@@ -155,6 +180,9 @@ class RubyParser
         # Emit final string token including closing quote
         add_token(:string, string_start, @pos)
         @pos += 1
+        raise "Expected :string_double but got #{@stack.last.type}" unless @stack.last.type == :string_double
+
+        @stack.pop
         return
       else
         @pos += 1
@@ -165,12 +193,17 @@ class RubyParser
     add_token(:string, string_start, @pos - 1) if @pos > string_start
   end
 
-  def parse_interpolation
+  def start_interpolation
     # Emit interpolation start token
     interp_start = @pos
     @pos += 2 # skip #{
     add_token(:interpolation_start, interp_start, @pos - 1)
+    @stack << Frame.new(:interpolation)
+    continue_interpolation(interp_start)
+  end
 
+  # TODO: I think brace_depth goes away when anything else using braces, like hashes, also becomes a mode on the stack
+  def continue_interpolation(interp_start, brace_depth = 1)
     # Track brace depth to handle nested braces
     brace_depth = 1
 
@@ -187,6 +220,10 @@ class RubyParser
           # Emit interpolation end token
           add_token(:interpolation_end, @pos, @pos)
           @pos += 1
+          raise "Expected :string_double but got #{@stack.last.type}" unless @stack.last.type == :interpolation
+
+          @stack.pop
+          return
         else
           parse_operator
         end
@@ -197,7 +234,7 @@ class RubyParser
       elsif char == '#'
         parse_comment
       elsif char == '"'
-        parse_string_double
+        start_string_double
       elsif char == "'"
         parse_string_single
       elsif char == ':'
@@ -367,5 +404,15 @@ class RubyParser
   def add_token(type, start_pos, end_pos)
     value = @input[start_pos..end_pos]
     @tokens << { type: type, value: value, start: start_pos, end: end_pos }
+  end
+end
+
+class RubyParser
+  attr_reader :lines
+
+  def initialize(input)
+    @lines = input.lines.map do |line|
+      RubyLineParser.new(line).parse
+    end
   end
 end
