@@ -12,92 +12,175 @@ COLORS = {
   global: { r: 224, g: 108, b: 117 },       # Red
   interpolation_start: { r: 152, g: 195, b: 121 },  # Green
   interpolation_end: { r: 152, g: 195, b: 121 },    # Green
-  array_literal: { r: 152, g: 195, b: 121 } # Green
+  array_literal: { r: 152, g: 195, b: 121 }, # Green
+  heredoc_start: { r: 152, g: 195, b: 121 },  # Green
+  heredoc_line: { r: 152, g: 195, b: 121 },   # Green
+  heredoc_end: { r: 152, g: 195, b: 121 }     # Green
 }
 
-def tick args
-  args.state.ruby_code ||= 'class Foo; def bar!(x); $gtk.args.outputs.labels << "hello #{x}"; end; end'
-  args.state.y_pos ||= 600
+SAMPLE_CODE = <<~RUBYCODE.freeze
+  class DragonGame
+    PLAYER = 'player'
 
+    def tick(args)
+      if args.state.tick_count == 0
+        args.state.message = <<~TEXT
+          Welcome to DragonRuby!
+        TEXT
+        args.state.player = {
+          x: 640, y: 360,
+          sprite: "sprites/\#{PLAYER}.png"
+        }
+      end
+
+      player = args.state.player
+      player.x += 5 if args.inputs.right
+
+      args.outputs.sprites << player
+    end
+  end
+RUBYCODE
+
+def tick args
   # Set background color (dark theme)
   args.outputs.background_color = [40, 44, 52]
-
-  # Parse the Ruby code
-  parser = RubyLineParser.new(args.state.ruby_code).parse
-  tokens = parser.tokens
 
   # Title
   args.outputs.labels << {
     x: 640,
-    y: 680,
-    text: 'Ruby Syntax Highlighter Demo',
-    size_px: 30,
+    y: 700,
+    text: 'Multiline Ruby Parser Demo',
+    size_px: 24,
     alignment_enum: 1,
     r: 200, g: 200, b: 200
   }
 
-  # Instructions
+  # Subtitle
   args.outputs.labels << {
     x: 640,
-    y: 640,
-    text: 'Showcasing keyword, string, number, symbol, constant, global, interpolation, and more!',
-    size_px: 16,
+    y: 670,
+    text: 'Stack-based parsing with heredocs, classes, methods, control flow & more!',
+    size_px: 14,
     alignment_enum: 1,
     r: 150, g: 150, b: 150
   }
 
-  # Render syntax-highlighted code
-  x_offset = 40
-  size = 20
+  # Divider line
+  args.outputs.lines << {
+    x: 640, y: 0,
+    x2: 640, y2: 720,
+    r: 80, g: 80, b: 80
+  }
 
-  tokens.each do |token|
-    color = COLORS[token[:type]] || { r: 255, g: 255, b: 255 }
+  # LEFT HALF: Syntax-highlighted code
+  y = 630
+  line_height = 22
+  x_left = 30
+  size = 16
 
-    args.outputs.labels << {
-      x: x_offset,
-      y: args.state.y_pos,
-      text: token[:value],
-      size_px: size,
-      **color
-    }
+  parser = RubyParser.new(SAMPLE_CODE)
 
-    # Calculate the exact width of this token
-    width, _ = $gtk.calcstringbox(token[:value], size_px: size)
-    x_offset += width
+  # Render code lines
+  parser.lines.each do |line|
+    x_offset = x_left
+    line.tokens.each do |token|
+      color = COLORS[token[:type]] || { r: 255, g: 255, b: 255 }
+
+      args.outputs.labels << {
+        x: x_offset,
+        y: y,
+        text: token[:value],
+        size_px: size,
+        **color
+      }
+
+      # Calculate the exact width of this token
+      width, _ = $gtk.calcstringbox(token[:value], size_px: size)
+      x_offset += width
+    end
+
+    # Show stack state on the right edge of left half
+    unless line.stack.empty?
+      stack_text = line.stack.map(&:type).join(', ')
+      args.outputs.labels << {
+        x: 600,
+        y: y,
+        text: "[#{stack_text}]",
+        size_px: 10,
+        alignment_enum: 2,
+        r: 200, g: 200, b: 200
+      }
+    end
+
+    y -= line_height
   end
 
-  # Show token breakdown
-  y = 500
+  # RIGHT HALF: Token breakdown and stats
+  y_right = 630
+  x_right = 670
+
   args.outputs.labels << {
-    x: 40,
-    y: y,
-    text: 'Token Breakdown:',
+    x: x_right,
+    y: y_right,
+    text: 'Token Breakdown',
     size_px: 18,
     r: 200, g: 200, b: 200
   }
 
-  y -= 30
-  token_types = tokens.map { |t| t[:type] }.uniq
+  y_right -= 30
+
+  # Collect all tokens
+  all_tokens_flat = parser.lines.flat_map { |line| line.tokens }
+  token_types = all_tokens_flat.map { |t| t[:type] }.uniq.sort
+
   token_types.each do |type|
-    count = tokens.count { |t| t[:type] == type }
+    count = all_tokens_flat.count { |t| t[:type] == type }
     color = COLORS[type] || { r: 255, g: 255, b: 255 }
 
     args.outputs.labels << {
-      x: 40,
-      y: y,
+      x: x_right,
+      y: y_right,
       text: "#{type}: #{count}",
       size_px: 14,
       **color
     }
-    y -= 25
+    y_right -= 22
+  end
+
+  # Stats section
+  y_right -= 20
+  args.outputs.labels << {
+    x: x_right,
+    y: y_right,
+    text: 'Parser Stats',
+    size_px: 18,
+    r: 200, g: 200, b: 200
+  }
+
+  y_right -= 30
+  stats = [
+    "Total lines: #{parser.lines.length}",
+    "Total tokens: #{all_tokens_flat.length}",
+    "Max stack depth: #{parser.lines.map { |l| l.stack.length }.max || 0}"
+  ]
+
+  stats.each do |stat|
+    args.outputs.labels << {
+      x: x_right,
+      y: y_right,
+      text: stat,
+      size_px: 14,
+      r: 180, g: 180, b: 180
+    }
+    y_right -= 22
   end
 
   # Footer
   args.outputs.labels << {
     x: 640,
-    y: 40,
-    text: 'Press ESC to quit | 79 tests passing',
-    size_px: 16,
+    y: 20,
+    text: 'dr-praser-rb 0.0.1',
+    size_px: 14,
     alignment_enum: 1,
     r: 150, g: 150, b: 150
   }

@@ -923,8 +923,12 @@ class RubyParser
   attr_reader :lines
 
   def initialize(input)
+    stack = []
     @lines = input.lines.map do |line|
-      RubyLineParser.new(line).parse
+      # TODO: I'm not sure I should be rstripping here, but the heredoc parsing fails without it
+      parser = RubyLineParser.new(line.rstrip, stack).parse
+      stack = parser.stack
+      parser
     end
   end
 end
