@@ -902,6 +902,12 @@ class RubyLineParser
 
     # Token for heredoc start
     add_token(:heredoc_start, start_pos, @pos - 1)
+
+    # Continue parsing the rest of this line normally (not as heredoc content)
+    # Heredoc content only starts on the NEXT line
+    while @pos < @input.length
+      start_parse
+    end
   end
 
   def update_last_significant_token(char)
@@ -925,8 +931,7 @@ class RubyParser
   def initialize(input)
     stack = []
     @lines = input.lines.map do |line|
-      # TODO: I'm not sure I should be rstripping here, but the heredoc parsing fails without it
-      # parser = RubyLineParser.new(line.rstrip, stack).parse
+      # TODO: should i be stripping new lines off of this?
       parser = RubyLineParser.new(line, stack).parse
       stack = parser.stack
       parser

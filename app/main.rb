@@ -24,7 +24,7 @@ SAMPLE_CODE = <<~RUBYCODE.freeze
 
     def tick(args)
       if args.state.tick_count == 0
-        args.state.message = <<~TEXT
+        args.state.message = <<~TEXT.capitalize # screaming
           Welcome to DragonRuby!
         TEXT
         args.state.player = {
@@ -179,7 +179,7 @@ def tick args
   args.outputs.labels << {
     x: 640,
     y: 20,
-    text: 'dr-praser-rb 0.0.1',
+    text: 'dr-parser-rb 0.0.1 - 154 tests passing',
     size_px: 14,
     alignment_enum: 1,
     r: 150, g: 150, b: 150

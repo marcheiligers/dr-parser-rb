@@ -179,7 +179,8 @@ def test_parser_heredoc_with_tilde(_args, assert)
 
   parser = RubyParser.new(sample_code)
   puts "--> #{parser.lines.first.tokens.map(&:type)}"
-  expected = [:identifier, :operator, :identifier, :operator, :identifier, :whitespace, :operator, :whitespace, :heredoc_start]
+  # After heredoc_start, there's a newline which is parsed as whitespace
+  expected = [:identifier, :operator, :identifier, :operator, :identifier, :whitespace, :operator, :whitespace, :heredoc_start, :whitespace]
   assert.equal!(parser.lines.first.tokens.map(&:type), expected)
 end
 
@@ -192,19 +193,21 @@ def test_parser_heredoc_with_tilde_and_capitalize(_args, assert)
 
   parser = RubyParser.new(sample_code)
   puts "--> #{parser.lines.first.tokens.map(&:type)}"
-  expected = [:identifier, :operator, :identifier, :operator, :identifier, :whitespace, :operator, :whitespace, :heredoc_start]
+  # After heredoc_start, .capitalize is parsed as operator + identifier, then whitespace (newline)
+  expected = [:identifier, :operator, :identifier, :operator, :identifier, :whitespace, :operator, :whitespace, :heredoc_start, :operator, :identifier, :whitespace]
   assert.equal!(parser.lines.first.tokens.map(&:type), expected)
 end
 
 def test_parser_heredoc_with_tilde_and_a_comment(_args, assert)
   sample_code = <<~RUBYCODE.freeze
-    args.state.message = <<~TEXT.capitalize
+    args.state.message = <<~TEXT # comment
       Welcome to DragonRuby!
     TEXT
   RUBYCODE
 
   parser = RubyParser.new(sample_code)
   puts "--> #{parser.lines.first.tokens.map(&:type)}"
-  expected = [:identifier, :operator, :identifier, :operator, :identifier, :whitespace, :operator, :whitespace, :heredoc_start]
+  # After heredoc_start, the comment is parsed as whitespace + comment + whitespace (newline after comment)
+  expected = [:identifier, :operator, :identifier, :operator, :identifier, :whitespace, :operator, :whitespace, :heredoc_start, :whitespace, :comment, :whitespace]
   assert.equal!(parser.lines.first.tokens.map(&:type), expected)
 end
