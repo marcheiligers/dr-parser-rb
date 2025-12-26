@@ -1,9 +1,9 @@
 # Remove the pound sign and leading space for the properties below before publishing your game.
 # devid=myname
-# devtitle=My Name
-# gameid=mygame
-# gametitle=My Game
-# version=0.1
+# devtitle=fascination.works
+# gameid=dr-parser-rb
+# gametitle=DragonRuby Parser for Ruby
+# version=0.0.1
 # icon=metadata/icon.png
 
 # === Flags available at all licensing tiers ===

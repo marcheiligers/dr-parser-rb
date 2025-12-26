@@ -167,3 +167,44 @@ def test_heredoc_content_contains_delimiter_substring(_args, assert)
   parser3 = RubyLineParser.new('DELIM', parser2.stack).parse
   assert.true!(parser3.stack.empty?)
 end
+
+# ---- Full parser -------------------------------------------------------------
+
+def test_parser_heredoc_with_tilde(_args, assert)
+  sample_code = <<~RUBYCODE.freeze
+    args.state.message = <<~TEXT
+      Welcome to DragonRuby!
+    TEXT
+  RUBYCODE
+
+  parser = RubyParser.new(sample_code)
+  puts "--> #{parser.lines.first.tokens.map(&:type)}"
+  expected = [:identifier, :operator, :identifier, :operator, :identifier, :whitespace, :operator, :whitespace, :heredoc_start]
+  assert.equal!(parser.lines.first.tokens.map(&:type), expected)
+end
+
+def test_parser_heredoc_with_tilde_and_capitalize(_args, assert)
+  sample_code = <<~RUBYCODE.freeze
+    args.state.message = <<~TEXT.capitalize
+      Welcome to DragonRuby!
+    TEXT
+  RUBYCODE
+
+  parser = RubyParser.new(sample_code)
+  puts "--> #{parser.lines.first.tokens.map(&:type)}"
+  expected = [:identifier, :operator, :identifier, :operator, :identifier, :whitespace, :operator, :whitespace, :heredoc_start]
+  assert.equal!(parser.lines.first.tokens.map(&:type), expected)
+end
+
+def test_parser_heredoc_with_tilde_and_a_comment(_args, assert)
+  sample_code = <<~RUBYCODE.freeze
+    args.state.message = <<~TEXT.capitalize
+      Welcome to DragonRuby!
+    TEXT
+  RUBYCODE
+
+  parser = RubyParser.new(sample_code)
+  puts "--> #{parser.lines.first.tokens.map(&:type)}"
+  expected = [:identifier, :operator, :identifier, :operator, :identifier, :whitespace, :operator, :whitespace, :heredoc_start]
+  assert.equal!(parser.lines.first.tokens.map(&:type), expected)
+end
