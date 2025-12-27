@@ -35,50 +35,50 @@ end
 # ---- Multiline hash tests ----------------------------------------------------
 
 def test_multiline_hash_basic(_args, assert)
-  parser1 = RubyLineParser.new('{a:').parse
+  parser1 = Parser::RubyLine.new('{a:').parse
   assert.equal!(parser1.stack.map(&:type), [:hash])
   assert.equal!(parser1.stack.last.depth, 1)
 
-  parser2 = RubyLineParser.new('1}', parser1.stack).parse
+  parser2 = Parser::RubyLine.new('1}', parser1.stack).parse
   assert.true!(parser2.stack.empty?)
   assert.false!(parser1.stack.empty?)  # We dup the stack
 end
 
 def test_multiline_hash_empty(_args, assert)
-  parser1 = RubyLineParser.new('{').parse
+  parser1 = Parser::RubyLine.new('{').parse
   assert.equal!(parser1.stack.map(&:type), [:hash])
 
-  parser2 = RubyLineParser.new('}', parser1.stack).parse
+  parser2 = Parser::RubyLine.new('}', parser1.stack).parse
   assert.true!(parser2.stack.empty?)
 end
 
 def test_multiline_hash_nested(_args, assert)
-  parser1 = RubyLineParser.new('{{a:').parse
+  parser1 = Parser::RubyLine.new('{{a:').parse
   assert.equal!(parser1.stack.map(&:type), [:hash])
   assert.equal!(parser1.stack.last.depth, 2)
 
-  parser2 = RubyLineParser.new('1}}', parser1.stack).parse
+  parser2 = Parser::RubyLine.new('1}}', parser1.stack).parse
   assert.true!(parser2.stack.empty?)
 end
 
 def test_multiline_hash_in_array(_args, assert)
-  parser1 = RubyLineParser.new('[{a:').parse
+  parser1 = Parser::RubyLine.new('[{a:').parse
   assert.equal!(parser1.stack.map(&:type), [:array, :hash])
 
-  parser2 = RubyLineParser.new('1}]', parser1.stack).parse
+  parser2 = Parser::RubyLine.new('1}]', parser1.stack).parse
   assert.true!(parser2.stack.empty?)
 end
 
 def test_multiline_hash_multiple_lines(_args, assert)
-  parser1 = RubyLineParser.new('{').parse
+  parser1 = Parser::RubyLine.new('{').parse
   assert.equal!(parser1.stack.map(&:type), [:hash])
 
-  parser2 = RubyLineParser.new('a: 1,', parser1.stack).parse
+  parser2 = Parser::RubyLine.new('a: 1,', parser1.stack).parse
   assert.equal!(parser2.stack.map(&:type), [:hash])
 
-  parser3 = RubyLineParser.new('b: 2', parser2.stack).parse
+  parser3 = Parser::RubyLine.new('b: 2', parser2.stack).parse
   assert.equal!(parser3.stack.map(&:type), [:hash])
 
-  parser4 = RubyLineParser.new('}', parser3.stack).parse
+  parser4 = Parser::RubyLine.new('}', parser3.stack).parse
   assert.true!(parser4.stack.empty?)
 end

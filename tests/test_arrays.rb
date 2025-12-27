@@ -163,36 +163,36 @@ end
 # ---- Multiline array tests ---------------------------------------------------
 
 def test_multiline_array_basic(_args, assert)
-  parser1 = RubyLineParser.new('[1,').parse
+  parser1 = Parser::RubyLine.new('[1,').parse
   assert.equal!(parser1.stack.map(&:type), [:array])
   assert.equal!(parser1.stack.last.depth, 1)
 
-  parser2 = RubyLineParser.new('2]', parser1.stack).parse
+  parser2 = Parser::RubyLine.new('2]', parser1.stack).parse
   assert.true!(parser2.stack.empty?)
   assert.false!(parser1.stack.empty?)  # We dup the stack
 end
 
 def test_multiline_array_empty(_args, assert)
-  parser1 = RubyLineParser.new('[').parse
+  parser1 = Parser::RubyLine.new('[').parse
   assert.equal!(parser1.stack.map(&:type), [:array])
 
-  parser2 = RubyLineParser.new(']', parser1.stack).parse
+  parser2 = Parser::RubyLine.new(']', parser1.stack).parse
   assert.true!(parser2.stack.empty?)
 end
 
 def test_multiline_array_nested(_args, assert)
-  parser1 = RubyLineParser.new('[[1,').parse
+  parser1 = Parser::RubyLine.new('[[1,').parse
   assert.equal!(parser1.stack.map(&:type), [:array])
   assert.equal!(parser1.stack.last.depth, 2)
 
-  parser2 = RubyLineParser.new('2]]', parser1.stack).parse
+  parser2 = Parser::RubyLine.new('2]]', parser1.stack).parse
   assert.true!(parser2.stack.empty?)
 end
 
 def test_multiline_array_with_hash(_args, assert)
-  parser1 = RubyLineParser.new('[{a:').parse
+  parser1 = Parser::RubyLine.new('[{a:').parse
   assert.equal!(parser1.stack.map(&:type), [:array, :hash])
 
-  parser2 = RubyLineParser.new('1}]', parser1.stack).parse
+  parser2 = Parser::RubyLine.new('1}]', parser1.stack).parse
   assert.true!(parser2.stack.empty?)
 end

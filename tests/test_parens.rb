@@ -36,50 +36,50 @@ end
 # ---- Multiline parentheses tests ---------------------------------------------
 
 def test_multiline_parens_basic(_args, assert)
-  parser1 = RubyLineParser.new('(1 +').parse
+  parser1 = Parser::RubyLine.new('(1 +').parse
   assert.equal!(parser1.stack.map(&:type), [:paren])
   assert.equal!(parser1.stack.last.depth, 1)
 
-  parser2 = RubyLineParser.new('2)', parser1.stack).parse
+  parser2 = Parser::RubyLine.new('2)', parser1.stack).parse
   assert.true!(parser2.stack.empty?)
   assert.false!(parser1.stack.empty?)  # We dup the stack
 end
 
 def test_multiline_parens_empty(_args, assert)
-  parser1 = RubyLineParser.new('(').parse
+  parser1 = Parser::RubyLine.new('(').parse
   assert.equal!(parser1.stack.map(&:type), [:paren])
 
-  parser2 = RubyLineParser.new(')', parser1.stack).parse
+  parser2 = Parser::RubyLine.new(')', parser1.stack).parse
   assert.true!(parser2.stack.empty?)
 end
 
 def test_multiline_parens_nested(_args, assert)
-  parser1 = RubyLineParser.new('((1 +').parse
+  parser1 = Parser::RubyLine.new('((1 +').parse
   assert.equal!(parser1.stack.map(&:type), [:paren])
   assert.equal!(parser1.stack.last.depth, 2)
 
-  parser2 = RubyLineParser.new('2))', parser1.stack).parse
+  parser2 = Parser::RubyLine.new('2))', parser1.stack).parse
   assert.true!(parser2.stack.empty?)
 end
 
 def test_multiline_method_call_args(_args, assert)
-  parser1 = RubyLineParser.new('foo(').parse
+  parser1 = Parser::RubyLine.new('foo(').parse
   assert.equal!(parser1.stack.map(&:type), [:paren])
 
-  parser2 = RubyLineParser.new('1,', parser1.stack).parse
+  parser2 = Parser::RubyLine.new('1,', parser1.stack).parse
   assert.equal!(parser2.stack.map(&:type), [:paren])
 
-  parser3 = RubyLineParser.new('2', parser2.stack).parse
+  parser3 = Parser::RubyLine.new('2', parser2.stack).parse
   assert.equal!(parser3.stack.map(&:type), [:paren])
 
-  parser4 = RubyLineParser.new(')', parser3.stack).parse
+  parser4 = Parser::RubyLine.new(')', parser3.stack).parse
   assert.true!(parser4.stack.empty?)
 end
 
 def test_multiline_parens_with_array(_args, assert)
-  parser1 = RubyLineParser.new('([1,').parse
+  parser1 = Parser::RubyLine.new('([1,').parse
   assert.equal!(parser1.stack.map(&:type), [:paren, :array])
 
-  parser2 = RubyLineParser.new('2])', parser1.stack).parse
+  parser2 = Parser::RubyLine.new('2])', parser1.stack).parse
   assert.true!(parser2.stack.empty?)
 end
