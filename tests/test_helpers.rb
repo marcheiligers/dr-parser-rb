@@ -15,3 +15,12 @@ def token(type, value, start_pos = 0, end_pos = nil)
   end_pos ||= start_pos + value.length - 1
   { type: type, value: value, start: start_pos, end: end_pos }
 end
+
+def debug_parser(parser)
+  parser.lines.each_with_index do |line, i|
+    puts "line #{i}:"
+    line.tokens.each do |tok|
+      puts "#{tok.type.to_s.ljust(20)} -> #{tok.value}"
+    end
+  end
+end

@@ -24,8 +24,8 @@ module Parser
           start_parse
         else
           case @stack.last.type
-            when :string_double then continue_string_double(0)
-            when :interpolation then continue_interpolation(0)
+            when :string_double then continue_string_double(@pos)
+            when :interpolation then start_parse # NOW: remove: continue_interpolation(0)
             when :array then continue_array
             when :hash then continue_hash
             when :paren then continue_paren
@@ -70,6 +70,9 @@ module Parser
         parse_percent_literal
       elsif char == '$'
         parse_global
+      elsif char == '}'
+        parse_closing_brace
+        return # Go back to whatever the containing thing was, if anything
       elsif char == ':'
         # Check if this is :: (scope operator), part of namespace, hash syntax, or a symbol
         if @pos + 1 < @input.length
@@ -151,25 +154,14 @@ module Parser
         char = @input[@pos]
 
         if char == '\\'
-          # Check for escaped interpolation
-          if @pos + 1 < @input.length && @input[@pos + 1] == '#'
-            @pos += 2  # skip \#
-          else
-            @pos += 2  # skip other escape sequence
-          end
-        elsif char == '#' && @pos + 1 < @input.length && @input[@pos + 1] == '{'
-          # Found interpolation - emit string token up to here
-          if @pos > string_start
-            add_token(:string, string_start, @pos - 1)
-          end
-
-          # Parse interpolation
+          # Escaped
+          @pos += 2 if @pos + 1 < @input.length
+        elsif char == '#' && @input[@pos + 1] == '{'
+          # Interpolation
+          add_token(:string, string_start, @pos - 1) if @pos > string_start
           start_interpolation
-
-          # Continue with next string segment
-          string_start = @pos
+          return
         elsif char == '"'
-          # Emit final string token including closing quote
           add_token(:string, string_start, @pos)
           @pos += 1
           raise "Expected :string_double but got #{@stack.last.type}" unless @stack.last.type == :string_double
@@ -191,10 +183,12 @@ module Parser
       @pos += 2 # skip #{
       add_token(:interpolation_start, interp_start, @pos - 1)
       @stack << Frame.new(:interpolation, 1)
-      continue_interpolation(interp_start)
+      # NOW: changed to start_parse
+      # continue_interpolation(interp_start)
+      start_parse
     end
 
-    def continue_interpolation(interp_start = 0)
+    def xcontinue_interpolation(interp_start = 0)
       # Parse tokens inside interpolation
       while @pos < @input.length && @stack.last.depth > 0
         char = @input[@pos]
@@ -539,40 +533,42 @@ module Parser
       # Handle bracket frame push/pop (only when not inside string/interpolation)
       # TODO: this method should never be called in a string.
       # TODO: for interpolation we should be pushing these.
-      unless inside_string_or_interpolation?
-        case char
-        when '['
-          # Only push if not already inside an array frame
-          push_array_frame unless @stack.last&.type == :array
-          @last_significant_token = :bracket_open
-        when ']'
-          pop_bracket_frame(:array)
-        when '{'
-          # Only push if not already inside a hash frame
-          unless @stack.last&.type == :hash
-            if block_context?
-              # For Phase 3: push_block_frame
-              # For now, treat as hash
-              push_hash_frame
-            else
-              push_hash_frame
-            end
+      raise "This shouldn't be a string" if %i[string_double string_single].include?(@stack.last&.type)
+
+      case char
+      when '['
+        # Only push if not already inside an array frame
+        push_array_frame unless @stack.last&.type == :array
+        @last_significant_token = :bracket_open
+      when ']'
+        pop_bracket_frame(:array)
+      when '{'
+        # Only push if not already inside a hash frame
+        unless @stack.last&.type == :hash
+          # TODO: block_context
+          if block_context?
+            # For Phase 3: push_block_frame
+            # For now, treat as hash
+            push_hash_frame
+          else
+            push_hash_frame
           end
-          @last_significant_token = :brace_open
-        when '}'
-          pop_bracket_frame_smart
-        when '('
-          # Only push if not already inside a paren frame
-          push_paren_frame unless @stack.last&.type == :paren
-          @last_significant_token = :paren_open
-        when ')'
-          pop_bracket_frame(:paren)
-        else
-          update_last_significant_token(char)
         end
+        @last_significant_token = :brace_open
+      when '}'
+        pop_bracket_frame_smart
+      when '('
+        # Only push if not already inside a paren frame
+        push_paren_frame unless @stack.last&.type == :paren
+        @last_significant_token = :paren_open
+      when ')'
+        pop_bracket_frame(:paren)
       else
         update_last_significant_token(char)
       end
+      # else
+      #   update_last_significant_token(char)
+      # end
     end
 
     def parse_identifier
@@ -839,12 +835,31 @@ module Parser
       end
     end
 
+    def parse_closing_brace
+      case @stack.last&.type
+      when :interpolation
+        @stack.pop
+        @tokens << { type: :interpolation_end, value: '}', start: @pos, end: @pos }
+        @pos += 1
+      when :hash
+        @stack.pop
+        # TODO: hash_end so we can colorize brackets
+        @tokens << { type: :operator, value: '}', start: @pos, end: @pos }
+        @pos += 1
+      else
+        # TODO: handle others (hash, block, lambda)
+        # TODO: error type
+        raise "Unhandled closing type #{@stack.last&.type.inspect}"
+      end
+    end
+
     def block_context?
       # After identifier without parens, { is likely a block
       @last_significant_token == :identifier &&
         ![:paren_open, :comma, :bracket_open, :hash_rocket, :colon].include?(@prev_significant_token)
     end
 
+    # TODO: Kill
     def inside_string_or_interpolation?
       return false if @stack.empty?
       [:string_double, :interpolation].include?(@stack.last.type)

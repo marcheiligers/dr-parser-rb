@@ -142,3 +142,24 @@ def test_stack_for_two_line_horror_string_with_interpolation(_args, assert)
 
   assert.false!(parser1.stack.empty?) # We dup the stack
 end
+
+def test_multiline_interpolation_in_a_string(_args, assert)
+  code = <<~CODE
+    str = "something \#{
+      this
+    } way comes
+    "
+  CODE
+  parser = Parser::Ruby.new(code)
+  assert.true!(parser.lines.last.stack.empty?)
+  # debug_parser(parser)
+end
+
+# TODO: handle gracfully
+# def test_closing_brace_without_frame(_args, assert)
+#   code = <<~CODE
+#     shrug = 123 }
+#   CODE
+#   parser = Parser::Ruby.new(code)
+#   degub_parser(parser)
+# end
