@@ -6,7 +6,7 @@ def test_multiline_heredoc_basic(_args, assert)
   parser1 = Parser::RubyLine.new('text = <<EOF').parse
   assert.equal!(parser1.stack.map(&:type), [:heredoc])
   assert.equal!(parser1.stack.last.name, 'EOF')
-  assert.equal!(parser1.stack.last.depth, 0)  # No modifier
+  assert.equal!(parser1.stack.last.modifier, nil)  # No modifier
 
   parser2 = Parser::RubyLine.new('This is text', parser1.stack).parse
   assert.equal!(parser2.stack.map(&:type), [:heredoc])
@@ -35,7 +35,7 @@ def test_multiline_heredoc_with_tilde(_args, assert)
   parser1 = Parser::RubyLine.new('text = <<~END').parse
   assert.equal!(parser1.stack.map(&:type), [:heredoc])
   assert.equal!(parser1.stack.last.name, 'END')
-  assert.equal!(parser1.stack.last.depth, 2)  # Tilde modifier
+  assert.equal!(parser1.stack.last.modifier, '~')  # Tilde modifier
 
   parser2 = Parser::RubyLine.new('    Content', parser1.stack).parse
   assert.equal!(parser2.stack.map(&:type), [:heredoc])
@@ -178,7 +178,6 @@ def test_parser_heredoc_with_tilde(_args, assert)
   RUBYCODE
 
   parser = Parser::Ruby.new(sample_code)
-  puts "--> #{parser.lines.first.tokens.map(&:type)}"
   # After heredoc_start, there's a newline which is parsed as whitespace
   expected = [:identifier, :operator, :identifier, :operator, :identifier, :whitespace, :operator, :whitespace, :heredoc_start, :whitespace]
   assert.equal!(parser.lines.first.tokens.map(&:type), expected)
@@ -192,7 +191,6 @@ def test_parser_heredoc_with_tilde_and_capitalize(_args, assert)
   RUBYCODE
 
   parser = Parser::Ruby.new(sample_code)
-  puts "--> #{parser.lines.first.tokens.map(&:type)}"
   # After heredoc_start, .capitalize is parsed as operator + identifier, then whitespace (newline)
   expected = [:identifier, :operator, :identifier, :operator, :identifier, :whitespace, :operator, :whitespace, :heredoc_start, :operator, :identifier, :whitespace]
   assert.equal!(parser.lines.first.tokens.map(&:type), expected)
@@ -206,7 +204,6 @@ def test_parser_heredoc_with_tilde_and_a_comment(_args, assert)
   RUBYCODE
 
   parser = Parser::Ruby.new(sample_code)
-  puts "--> #{parser.lines.first.tokens.map(&:type)}"
   # After heredoc_start, the comment is parsed as whitespace + comment + whitespace (newline after comment)
   expected = [:identifier, :operator, :identifier, :operator, :identifier, :whitespace, :operator, :whitespace, :heredoc_start, :whitespace, :comment, :whitespace]
   assert.equal!(parser.lines.first.tokens.map(&:type), expected)
@@ -215,45 +212,62 @@ end
 # ---- Heredoc interpolation tests ---------------------------------------------
 
 def test_heredoc_with_interpolation(_args, assert)
-  parser1 = Parser::RubyLine.new('msg = <<TEXT').parse
-  assert.equal!(parser1.stack.map(&:type), [:heredoc])
-  assert.equal!(parser1.stack.last.interpolation, true)
+  code = <<~'CODE'
+    msg = <<TEXT
+    Hello #{name}!
+    TEXT
+  CODE
 
-  parser2 = Parser::RubyLine.new('Hello #{name}!', parser1.stack).parse
+  parser = Parser::Ruby.new(code)
+  assert.equal!(parser.lines[0].stack.map(&:type), [:heredoc])
+
+  line2 = parser.lines[1]
   # Should have heredoc_line, interpolation_start, identifier, interpolation_end, heredoc_line
-  types = parser2.tokens.map { |t| t[:type] }
+  types = line2.tokens.map { |t| t[:type] }
   assert.true!(types.include?(:heredoc_line))
   assert.true!(types.include?(:interpolation_start))
   assert.true!(types.include?(:interpolation_end))
 
-  parser3 = Parser::RubyLine.new('TEXT', parser2.stack).parse
-  assert.true!(parser3.stack.empty?)
+  line3 = parser.lines[2]
+  assert.true!(line3.stack.empty?)
 end
 
 def test_heredoc_double_quoted_with_interpolation(_args, assert)
-  parser1 = Parser::RubyLine.new('msg = <<"TEXT"').parse
-  assert.equal!(parser1.stack.map(&:type), [:heredoc])
-  assert.equal!(parser1.stack.last.interpolation, true)
+  code = <<~'CODE'
+    msg = <<"TEXT"
+    Hello #{name}!
+    TEXT
+  CODE
 
-  parser2 = Parser::RubyLine.new('Hello #{name}!', parser1.stack).parse
-  types = parser2.tokens.map { |t| t[:type] }
+  parser = Parser::Ruby.new(code)
+  line1 = parser.lines[0]
+  assert.equal!(line1.stack.map(&:type), [:heredoc])
+
+  line2 = parser.lines[1]
+  types = line2.tokens.map { |t| t[:type] }
   assert.true!(types.include?(:interpolation_start))
 
-  parser3 = Parser::RubyLine.new('TEXT', parser2.stack).parse
-  assert.true!(parser3.stack.empty?)
+  line3 = parser.lines[2]
+  assert.true!(line3.stack.empty?)
 end
 
 def test_heredoc_single_quoted_no_interpolation(_args, assert)
-  parser1 = Parser::RubyLine.new("msg = <<'TEXT'").parse
-  assert.equal!(parser1.stack.map(&:type), [:heredoc])
-  assert.equal!(parser1.stack.last.interpolation, false)
+  code = <<~'CODE'
+    msg = <<'TEXT'
+    Hello #{name}!
+    TEXT
+  CODE
 
-  parser2 = Parser::RubyLine.new('Hello #{name}!', parser1.stack).parse
+  parser = Parser::Ruby.new(code)
+  line1 = parser.lines[0]
+  assert.equal!(line1.stack.map(&:type), [:heredoc])
+
+  line2 = parser.lines[1]
   # Should treat #{name} as literal text, not interpolation
-  types = parser2.tokens.map { |t| t[:type] }
+  types = line2.tokens.map { |t| t[:type] }
   assert.false!(types.include?(:interpolation_start))
   assert.equal!(types, [:heredoc_line])
 
-  parser3 = Parser::RubyLine.new('TEXT', parser2.stack).parse
-  assert.true!(parser3.stack.empty?)
+  line3 = parser.lines[2]
+  assert.true!(line3.stack.empty?)
 end

@@ -18,7 +18,7 @@ end
 
 def debug_parser(parser)
   parser.lines.each_with_index do |line, i|
-    puts "line #{i}:"
+    puts "line #{i}: #{line.stack.map(&:type)}"
     line.tokens.each do |tok|
       puts "#{tok.type.to_s.ljust(20)} -> #{tok.value}"
     end

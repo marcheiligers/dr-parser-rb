@@ -6,7 +6,11 @@ module Parser
 
     attr_reader :tokens, :stack
 
-    Frame = Struct.new(:type, :depth, :name, :interpolation)
+    # For Heredocs:
+    #   depth = 0 => no interpolation (single quoted delimiter)
+    #   depth = anything else => interpolation
+    #   modifier = nil, - or ~ (>>, ->> or ~>>)
+    Frame = Struct.new(:type, :depth, :name, :modifier)
 
     def initialize(input, stack = [])
       @input = input
@@ -25,7 +29,7 @@ module Parser
         else
           case @stack.last.type
             when :string_double then continue_string_double(@pos)
-            when :interpolation then start_parse # NOW: remove: continue_interpolation(0)
+            when :interpolation then start_parse
             when :array then continue_array
             when :hash then continue_hash
             when :paren then continue_paren
@@ -178,68 +182,10 @@ module Parser
     end
 
     def start_interpolation
-      # Emit interpolation start token
-      interp_start = @pos
-      @pos += 2 # skip #{
-      add_token(:interpolation_start, interp_start, @pos - 1)
+      add_token(:interpolation_start, @pos, @pos + 1) # skip #{
+      @pos += 2
       @stack << Frame.new(:interpolation, 1)
-      # NOW: changed to start_parse
-      # continue_interpolation(interp_start)
       start_parse
-    end
-
-    def xcontinue_interpolation(interp_start = 0)
-      # Parse tokens inside interpolation
-      while @pos < @input.length && @stack.last.depth > 0
-        char = @input[@pos]
-
-        if char == '{'
-          @stack.last.depth += 1
-          parse_operator
-        elsif char == '}'
-          @stack.last.depth -= 1
-          if @stack.last.depth == 0
-            # Emit interpolation end token
-            add_token(:interpolation_end, @pos, @pos)
-            @pos += 1
-            raise "Expected :interpolation but got #{@stack.last.type}" unless @stack.last.type == :interpolation
-
-            @stack.pop
-            return
-          else
-            parse_operator
-          end
-        elsif whitespace?(char)
-          parse_whitespace
-        elsif digit?(char)
-          parse_number
-        elsif char == '#'
-          parse_comment
-        elsif char == '"'
-          start_string_double
-        elsif char == "'"
-          parse_string_single
-        elsif char == ':'
-          # Check if this is :: (scope operator), part of namespace, hash syntax, or a symbol
-          if @pos + 1 < @input.length
-            next_char = @input[@pos + 1]
-            if next_char == ':' || (next_char >= 'A' && next_char <= 'Z') || whitespace?(next_char) || next_char == '}'
-              # :: or :Constant or hash syntax (a: value) - treat as operator
-              parse_operator
-            else
-              parse_symbol
-            end
-          else
-            parse_operator
-          end
-        elsif operator_start?(char)
-          parse_operator
-        elsif identifier_start?(char)
-          parse_identifier
-        else
-          @pos += 1
-        end
-      end
     end
 
     def continue_array
@@ -248,9 +194,11 @@ module Parser
 
         case char
         when '['
+          # TODO: emit new array frames
           @stack.last.depth += 1
           start_parse
         when ']'
+          # TODO: pop array frames
           # Let parse_operator handle depth decrement and popping via pop_bracket_frame
           start_parse
           # Check if frame was popped (stack empty or different frame type)
@@ -404,34 +352,23 @@ module Parser
     end
 
     def continue_heredoc
-      # Get delimiter, modifier, and interpolation flag from frame
-      delimiter = @stack.last.name
-      modifier = @stack.last.depth  # 0=none, 1=-, 2=~
-      interpolation = @stack.last.interpolation
-
       # Check if current line matches delimiter (with or without indentation based on modifier)
-      line_to_check = case modifier
-                      when 1, 2  # <<- or <<~ allow indented closing delimiter
+      line_to_check = case @stack.last.modifier
+                      when '-', '~' # <<- or <<~ allow indented closing delimiter
                         @input.strip
-                      else  # << requires exact match
-                        @input.chomp  # Remove trailing newline but keep leading whitespace
+                      else # << requires exact match
+                        @input.chomp # Remove trailing newline but keep leading whitespace
                       end
 
-      if line_to_check == delimiter
-        # Closing delimiter found
+      if line_to_check == @stack.last.name
         add_token(:heredoc_end, 0, @input.length - 1)
         @stack.pop
+        @pos = @input.length
+      elsif @stack.last.depth == 0
+        add_token(:heredoc_line, 0, @input.length - 1)
         @pos = @input.length  # Consume the entire line
       else
-        # Heredoc content line
-        if interpolation
-          # Parse with interpolation support (like double-quoted strings)
-          continue_heredoc_with_interpolation
-        else
-          # No interpolation - treat entire line as heredoc content
-          add_token(:heredoc_line, 0, @input.length - 1)
-          @pos = @input.length  # Consume the entire line
-        end
+        continue_heredoc_with_interpolation
       end
     end
 
@@ -442,32 +379,19 @@ module Parser
         char = @input[@pos]
 
         if char == '\\'
-          # Check for escaped interpolation
-          if @pos + 1 < @input.length && @input[@pos + 1] == '#'
-            @pos += 2  # skip \#
-          else
-            @pos += 2  # skip other escape sequence
-          end
+          # Escaped
+          @pos += 2  # skip escape sequence
         elsif char == '#' && @pos + 1 < @input.length && @input[@pos + 1] == '{'
-          # Found interpolation - emit heredoc_line token up to here
-          if @pos > string_start
-            add_token(:heredoc_line, string_start, @pos - 1)
-          end
-
-          # Parse interpolation
+          # Interpolation
+          add_token(:heredoc_line, string_start, @pos - 1) if @pos > string_start
           start_interpolation
-
-          # Continue with next segment
-          string_start = @pos
+          return
         else
           @pos += 1
         end
       end
 
-      # Emit remaining content as heredoc_line
-      if @pos > string_start
-        add_token(:heredoc_line, string_start, @pos - 1)
-      end
+      add_token(:heredoc_line, string_start, @pos - 1) if @pos > string_start
     end
 
     def parse_string_single
@@ -512,30 +436,17 @@ module Parser
 
     # TODO: fix this method
     def parse_operator
-      start_pos = @pos
+      op = find_operator(@input[@pos..])
 
-      # Try to match multi-character operators first
-      if @pos + 1 < @input.length
-        two_char = @input[@pos..@pos + 1]
-        if OPERATORS.include?(two_char)
-          @pos += 2
-          add_token(:operator, start_pos, @pos - 1)
-          update_last_significant_token(two_char)
-          return
-        end
-      end
-
-      # Single character operator
-      char = @input[@pos]
-      @pos += 1
-      add_token(:operator, start_pos, @pos - 1)
+      add_token(:operator, @pos, @pos + op.length - 1)
+      @pos += op.length
 
       # Handle bracket frame push/pop (only when not inside string/interpolation)
       # TODO: this method should never be called in a string.
       # TODO: for interpolation we should be pushing these.
       raise "This shouldn't be a string" if %i[string_double string_single].include?(@stack.last&.type)
 
-      case char
+      case op
       when '['
         # Only push if not already inside an array frame
         push_array_frame unless @stack.last&.type == :array
@@ -564,7 +475,7 @@ module Parser
       when ')'
         pop_bracket_frame(:paren)
       else
-        update_last_significant_token(char)
+        update_last_significant_token(op)
       end
       # else
       #   update_last_significant_token(char)
@@ -835,6 +746,7 @@ module Parser
       end
     end
 
+    # TODO: we'll also need closing_square ], and closing_paren )
     def parse_closing_brace
       case @stack.last&.type
       when :interpolation
@@ -847,7 +759,7 @@ module Parser
         @tokens << { type: :operator, value: '}', start: @pos, end: @pos }
         @pos += 1
       else
-        # TODO: handle others (hash, block, lambda)
+        # TODO: handle others (block, lambda)
         # TODO: error type
         raise "Unhandled closing type #{@stack.last&.type.inspect}"
       end
@@ -891,7 +803,7 @@ module Parser
 
     def start_heredoc
       start_pos = @pos
-      @pos += 2  # skip <<
+      @pos += 2 # skip <<
 
       # Check for - or ~ modifier
       indent_modifier = nil
@@ -901,14 +813,11 @@ module Parser
       end
 
       # Read delimiter
-      delimiter_start = @pos
       delimiter = ''
-      interpolation_allowed = true  # Default for unquoted
-
       if @pos < @input.length && (@input[@pos] == '"' || @input[@pos] == "'")
         # Quoted delimiter
         quote = @input[@pos]
-        interpolation_allowed = (quote == '"')  # Double-quoted allows interpolation, single doesn't
+        # interpolation_allowed = (quote == '"')  # NOW: remove Double-quoted allows interpolation, single doesn't
         @pos += 1
         while @pos < @input.length && @input[@pos] != quote
           delimiter += @input[@pos]
@@ -923,23 +832,14 @@ module Parser
         end
       end
 
-      # Push heredoc frame - store delimiter in name, modifier in depth (reusing fields)
-      # We'll use depth to store the modifier: 0=none, 1=-, 2=~
-      # interpolation field stores whether interpolation is allowed
-      depth_value = case indent_modifier
-                    when '-' then 1
-                    when '~' then 2
-                    else 0
-                    end
-
-      # TODO: remove `interpolation_allowed` ... it's easy to check for the single quote on the name
-      @stack << Frame.new(:heredoc, depth_value, delimiter, interpolation_allowed)
+      @stack << Frame.new(:heredoc, quote == "'" ? 0 : 1, delimiter, indent_modifier)
 
       # Token for heredoc start
       add_token(:heredoc_start, start_pos, @pos - 1)
 
       # Continue parsing the rest of this line normally (not as heredoc content)
       # Heredoc content only starts on the NEXT line
+      # TODO: this could result in other frames being added, which would be a syntax error
       while @pos < @input.length
         start_parse
       end
