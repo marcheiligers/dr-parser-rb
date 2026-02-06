@@ -1,6 +1,6 @@
 def assert_parses_to(assert, input, expected_tokens, message = nil)
-  parser = Parser::RubyLine.new(input)
-  actual = parser.parse.tokens
+  parser = Parser::Ruby.new(input)
+  actual = parser.lines.first.tokens
 
   error_msg = message || <<~EOS
     Failed to parse: '#{input}'
@@ -9,6 +9,7 @@ def assert_parses_to(assert, input, expected_tokens, message = nil)
   EOS
 
   assert.equal! actual, expected_tokens, error_msg
+  debug_parser(parser)
 end
 
 def token(type, value, start_pos = 0, end_pos = nil)
@@ -18,7 +19,7 @@ end
 
 def debug_parser(parser)
   parser.lines.each_with_index do |line, i|
-    puts "line #{i}: #{line.stack.map(&:type)}"
+    puts "line #{i.to_s.ljust(15)} => #{line.stack.map(&:type)}"
     line.tokens.each do |tok|
       puts "#{tok.type.to_s.ljust(20)} -> #{tok.value}"
     end

@@ -12,6 +12,10 @@ module Parser
     #   modifier = nil, - or ~ (>>, ->> or ~>>)
     Frame = Struct.new(:type, :depth, :name, :modifier)
 
+    BRACKET_FRAMES = %i[array hash paren].freeze
+    ENDABLE_FRAMES = %i[begin case class def do_block for if module unless until while].freeze
+    OTHER_FRAMES = %i[heredoc interpolation string_double].freeze
+
     def initialize(input, stack = [])
       @input = input
       @pos = 0
@@ -159,7 +163,7 @@ module Parser
 
         if char == '\\'
           # Escaped
-          @pos += 2 if @pos + 1 < @input.length
+          @pos += 2
         elsif char == '#' && @input[@pos + 1] == '{'
           # Interpolation
           add_token(:string, string_start, @pos - 1) if @pos > string_start
@@ -434,7 +438,6 @@ module Parser
       add_token(:symbol, start_pos, @pos - 1)
     end
 
-    # TODO: fix this method
     def parse_operator
       op = find_operator(@input[@pos..])
 
@@ -449,7 +452,7 @@ module Parser
       case op
       when '['
         # Only push if not already inside an array frame
-        push_array_frame unless @stack.last&.type == :array
+        @stack << Frame.new(:array, 1) # TODO: depth
         @last_significant_token = :bracket_open
       when ']'
         pop_bracket_frame(:array)
@@ -460,9 +463,9 @@ module Parser
           if block_context?
             # For Phase 3: push_block_frame
             # For now, treat as hash
-            push_hash_frame
+            @stack << Frame.new(:hash, 1)
           else
-            push_hash_frame
+            @stack << Frame.new(:hash, 1)
           end
         end
         @last_significant_token = :brace_open
@@ -470,7 +473,8 @@ module Parser
         pop_bracket_frame_smart
       when '('
         # Only push if not already inside a paren frame
-        push_paren_frame unless @stack.last&.type == :paren
+        # TODO: push new frames
+        @stack << Frame.new(:paren, 1) unless @stack.last&.type == :paren
         @last_significant_token = :paren_open
       when ')'
         pop_bracket_frame(:paren)
@@ -515,16 +519,12 @@ module Parser
 
     def parse_global
       start_pos = @pos
-      @pos += 1  # skip $
+      @pos += 1 # skip $
 
-      # Special globals like $$, $!, $?, $0-$9, etc.
       if @pos < @input.length
         char = @input[@pos]
-        if char == '$' || char == '!' || char == '?' || char == '&' || char == '`' ||
-           char == "'" || char == '+' || char == '~' || char == '=' || char == '/' ||
-           char == '\\' || char == ',' || char == ';' || char == '.' || char == '<' ||
-           char == '>' || char == '*' || char == '@' || char == ':' ||
-           (char >= '0' && char <= '9')
+        # Special globals like $$, $!, $?, $0-$9, etc.
+        if global?(char)
           @pos += 1
         elsif identifier_start?(char)
           # Regular global like $gtk, $my_var
@@ -714,25 +714,11 @@ module Parser
     end
 
     # Helper methods for bracket frame management
-    # TODO: inline and kill
-    def push_array_frame
-      @stack << Frame.new(:array, 1)
-    end
-
-    def push_hash_frame
-      @stack << Frame.new(:hash, 1)
-    end
-
-    def push_paren_frame
-      @stack << Frame.new(:paren, 1)
-    end
 
     def pop_bracket_frame(expected_type)
-      return unless @stack.last
-
-      if @stack.last.type == expected_type
-        @stack.last.depth -= 1
-        @stack.pop if @stack.last.depth == 0
+      while BRACKET_FRAMES.include?(@stack.last&.type)
+        frame = @stack.pop
+        return if frame.type == expected_type
       end
     end
 
@@ -747,6 +733,7 @@ module Parser
     end
 
     # TODO: we'll also need closing_square ], and closing_paren )
+    # MARC: this stays
     def parse_closing_brace
       case @stack.last&.type
       when :interpolation
@@ -817,7 +804,6 @@ module Parser
       if @pos < @input.length && (@input[@pos] == '"' || @input[@pos] == "'")
         # Quoted delimiter
         quote = @input[@pos]
-        # interpolation_allowed = (quote == '"')  # NOW: remove Double-quoted allows interpolation, single doesn't
         @pos += 1
         while @pos < @input.length && @input[@pos] != quote
           delimiter += @input[@pos]

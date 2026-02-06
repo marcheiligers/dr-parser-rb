@@ -9,6 +9,7 @@ module Parser
       '+', '-', '*', '/', '%', '=', '<', '>', '!', '&', '|', '^', '~',
       '(', ')', '[', ']', '{', '}', ',', '.', ':', ';', '?'
     ].freeze
+    OPERATORS = (OPERATORS_3 + OPERATORS_2 + OPERATORS_1).freeze
     OPERATORS_1_STR = OPERATORS_1.join.freeze
 
     KEYWORDS = %w[
@@ -22,6 +23,8 @@ module Parser
     WHITESPACE = " \t\n\r".freeze
     NUMBER = '0123456789'.freeze
     IDENTIFIER = ((('a'..'z').to_a + ('A'..'Z').to_a).join + '_').freeze
+
+    GLOBALS = ('$!?&`+~=/\,;.<>*@:\'' + NUMBER).freeze
 
     def whitespace?(char)
       WHITESPACE.include?(char)
@@ -44,9 +47,11 @@ module Parser
     end
 
     def find_operator(str)
-      OPERATORS_3.find { _1 == str[0, 3] } ||
-        OPERATORS_2.find { _1 == str[0, 2] } ||
-        OPERATORS_1.find { _1 == str[0] }
+      OPERATORS.find { str.start_with?(_1) }
+    end
+
+    def global?(char)
+      GLOBALS.include?(char)
     end
   end
 end

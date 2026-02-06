@@ -196,3 +196,18 @@ def test_multiline_array_with_hash(_args, assert)
   parser2 = Parser::RubyLine.new('1}]', parser1.stack).parse
   assert.true!(parser2.stack.empty?)
 end
+
+def test_multiline_nested_array(_args, assert)
+  code = <<~'CODE'
+    arr = [
+      [
+        1,
+        2
+      ]
+    ]
+  CODE
+  parser = Parser::Ruby.new(code)
+  assert.equal!(parser.lines[0].stack.map(&:type), [:array])
+  assert.equal!(parser.lines[2].stack.map(&:type), [:array, :array])
+  assert.true!(parser.lines[5].stack.empty?)
+end
