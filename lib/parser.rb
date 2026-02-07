@@ -1202,6 +1202,15 @@ module Parser
       end
     end
 
+    def reparse_budget(ms)
+      return unless dirty?
+
+      deadline = Time.now.to_f + (ms / 1000.0)
+      while dirty? && Time.now.to_f < deadline
+        reparse_next_line
+      end
+    end
+
     private
 
     def deep_copy_stack(stack)

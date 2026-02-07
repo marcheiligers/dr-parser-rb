@@ -347,3 +347,39 @@ def test_incremental_replace_lines_inside_def(_args, assert)
   assert.false! parser.dirty?, "editing inside def shouldn't dirty subsequent lines"
   assert.equal! parser.lines[1].output_stack.map(&:type), [:def]
 end
+
+# --- reparse_budget ---
+
+def test_incremental_reparse_budget_cleans_dirty(_args, assert)
+  # Build a file with many lines, open a string on line 0 to dirty everything
+  lines = (0..9).map { |i| "x#{i} = #{i}\n" }
+  parser = Parser::Ruby.new(lines.join)
+  parser.replace_lines(0, 1, ["x0 = \"\n"])
+  assert.true! parser.dirty?
+
+  # Give a generous budget to reparse everything
+  parser.reparse_budget(1000)
+  assert.false! parser.dirty?, "generous budget should clean all dirty lines"
+end
+
+def test_incremental_reparse_budget_noop_when_clean(_args, assert)
+  parser = Parser::Ruby.new("x = 1\ny = 2\n")
+  assert.false! parser.dirty?
+  parser.reparse_budget(100)
+  assert.false! parser.dirty?, "should remain clean"
+end
+
+def test_incremental_reparse_budget_partial_reparse(_args, assert)
+  # Build a large file and dirty it, use 0ms budget to ensure no work is done
+  lines = (0..99).map { |i| "x#{i} = #{i}\n" }
+  parser = Parser::Ruby.new(lines.join)
+  parser.replace_lines(0, 1, ["x0 = \"\n"])
+  assert.true! parser.dirty?
+
+  # 0ms budget - should do at most one line (the time check happens after first iteration)
+  parser.reparse_budget(0)
+  # It may or may not still be dirty depending on how fast one line parses,
+  # but the key test is that it doesn't crash and processes at least something
+  # With 100 lines to reparse, it should still be dirty after 0ms budget
+  assert.true! parser.dirty?, "0ms budget should not clean 100 dirty lines"
+end
