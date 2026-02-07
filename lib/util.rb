@@ -2,9 +2,11 @@ module Parser
   module Util
     extend self
 
-    # TODO: spaceship operator <=>, safe navigation &, stabby lambda ->
-    OPERATORS_3 = ['<=>'].freeze
-    OPERATORS_2 = ['=>', '==', '!=', '<=', '>=', '<<', '>>', '&&', '||'].freeze
+    OPERATORS_3 = ['<=>', '...', '||=', '&&=', '<<=', '>>=', '**='].freeze
+    OPERATORS_2 = [
+      '=>', '==', '!=', '<=', '>=', '<<', '>>', '&&', '||',
+      '+=', '-=', '*=', '/=', '%=', '**', '..', '::', '&.', '->'
+    ].freeze
     OPERATORS_1 = [
       '+', '-', '*', '/', '%', '=', '<', '>', '!', '&', '|', '^', '~',
       '(', ')', '[', ']', '{', '}', ',', '.', ':', ';', '?'
@@ -32,6 +34,10 @@ module Parser
 
     def digit?(char)
       NUMBER.include?(char)
+    end
+
+    def hex_char?(char)
+      digit?(char) || (char >= 'a' && char <= 'f') || (char >= 'A' && char <= 'F') || char == '_'
     end
 
     def identifier_start?(char)

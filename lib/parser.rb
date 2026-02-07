@@ -13,8 +13,8 @@ module Parser
     Frame = Struct.new(:type, :depth, :name, :modifier)
 
     BRACKET_FRAMES = %i[array hash paren].freeze
-    ENDABLE_FRAMES = %i[begin case class def do_block for if module unless until while].freeze
-    OTHER_FRAMES = %i[heredoc interpolation string_double].freeze
+    ENDABLE_FRAMES = %i[begin case class def do_block for if lambda module unless until while].freeze
+    OTHER_FRAMES = %i[backtick heredoc interpolation percent_interp regex string_double].freeze
 
     def initialize(input, stack = [])
       @input = input
@@ -24,6 +24,7 @@ module Parser
       @last_significant_token = nil
       @prev_significant_token = nil
       @seen_non_whitespace = false  # Track if we've seen non-whitespace on this line
+      @endless_method_possible = false  # Track if we might be in an endless method def
     end
 
     def parse # continue_parse
@@ -33,6 +34,9 @@ module Parser
         else
           case @stack.last.type
             when :string_double then continue_string_double(@pos)
+            when :backtick then continue_backtick(@pos)
+            when :percent_interp then continue_percent_interp(@pos)
+            when :regex then continue_regex(@pos)
             when :interpolation then start_parse
             when :array then continue_array
             when :hash then continue_hash
@@ -47,6 +51,7 @@ module Parser
             when :until then continue_until
             when :for then continue_for
             when :do_block then continue_do_block
+            when :lambda then continue_lambda
             when :begin then continue_begin
             when :heredoc then continue_heredoc
             else raise "Unexpected Frame #{@stack.last.type}"
@@ -60,7 +65,7 @@ module Parser
     private
 
     def start_parse
-      return self if @input.nil? || @input.empty?
+      return if @input.nil? || @pos >= @input.length
 
       char = @input[@pos]
 
@@ -74,8 +79,14 @@ module Parser
         start_string_double
       elsif char == "'"
         parse_string_single
+      elsif char == '?'
+        parse_character_literal_or_operator
       elsif char == '%'
         parse_percent_literal
+      elsif char == '`'
+        start_backtick
+      elsif char == '@'
+        parse_instance_or_class_variable
       elsif char == '$'
         parse_global
       elsif char == '}'
@@ -102,6 +113,8 @@ module Parser
         else
           parse_operator
         end
+      elsif char == '/' && regex_start_context?
+        start_regex
       elsif operator_start?(char)
         parse_operator
       elsif identifier_start?(char)
@@ -123,23 +136,53 @@ module Parser
     def parse_number
       start_pos = @pos
 
+      # Check for prefix-based literals: 0x (hex), 0b (binary), 0o (octal)
+      if @input[@pos] == '0' && @pos + 1 < @input.length
+        prefix = @input[@pos + 1]
+        if prefix == 'x' || prefix == 'X'
+          @pos += 2
+          @pos += 1 while @pos < @input.length && hex_char?(@input[@pos])
+          add_token(:number, start_pos, @pos - 1)
+          return
+        elsif prefix == 'b' || prefix == 'B'
+          @pos += 2
+          @pos += 1 while @pos < @input.length && (@input[@pos] == '0' || @input[@pos] == '1' || @input[@pos] == '_')
+          add_token(:number, start_pos, @pos - 1)
+          return
+        elsif prefix == 'o' || prefix == 'O'
+          @pos += 2
+          @pos += 1 while @pos < @input.length && ((@input[@pos] >= '0' && @input[@pos] <= '7') || @input[@pos] == '_')
+          add_token(:number, start_pos, @pos - 1)
+          return
+        end
+      end
+
       # Parse integer or decimal part with optional underscores
       while @pos < @input.length
         char = @input[@pos]
         if digit?(char)
           @pos += 1
         elsif char == '_' && @pos + 1 < @input.length && digit?(@input[@pos + 1])
-          # Allow underscore only if followed by a digit
           @pos += 1
         elsif char == '.' && @pos + 1 < @input.length && digit?(@input[@pos + 1])
-          # Allow decimal point only if followed by a digit
           @pos += 1
         else
           break
         end
       end
 
+      # Check for scientific notation (e.g., 1e10, 1.5e-3, 2E+5)
+      if @pos < @input.length && (@input[@pos] == 'e' || @input[@pos] == 'E')
+        @pos += 1
+        # Optional sign
+        if @pos < @input.length && (@input[@pos] == '+' || @input[@pos] == '-')
+          @pos += 1
+        end
+        @pos += 1 while @pos < @input.length && digit?(@input[@pos])
+      end
+
       add_token(:number, start_pos, @pos - 1)
+      @last_significant_token = :number
     end
 
     def parse_comment
@@ -175,6 +218,7 @@ module Parser
           raise "Expected :string_double but got #{@stack.last.type}" unless @stack.last.type == :string_double
 
           @stack.pop
+          @last_significant_token = :string
           return
         else
           @pos += 1
@@ -183,6 +227,80 @@ module Parser
 
       # Incomplete string - emit what we have
       add_token(:string, string_start, @pos - 1) if @pos > string_start
+    end
+
+    def start_backtick
+      @stack << Frame.new(:backtick)
+      string_start = @pos
+      @pos += 1 # skip opening backtick
+      continue_backtick(string_start)
+    end
+
+    def continue_backtick(string_start)
+      while @pos < @input.length
+        char = @input[@pos]
+
+        if char == '\\'
+          @pos += 2
+        elsif char == '#' && @pos + 1 < @input.length && @input[@pos + 1] == '{'
+          add_token(:backtick, string_start, @pos - 1) if @pos > string_start
+          start_interpolation
+          return
+        elsif char == '`'
+          add_token(:backtick, string_start, @pos)
+          @pos += 1
+          @stack.pop
+          return
+        else
+          @pos += 1
+        end
+      end
+
+      # Incomplete backtick string
+      add_token(:backtick, string_start, @pos - 1) if @pos > string_start
+    end
+
+    def continue_percent_interp(string_start)
+      frame = @stack.last
+      closing = frame.name
+      opening = case closing
+                when ')' then '('
+                when ']' then '['
+                when '}' then '{'
+                when '>' then '<'
+                else nil
+                end
+      token_type = frame.modifier
+
+      while @pos < @input.length
+        char = @input[@pos]
+
+        if char == '\\'
+          @pos += 2
+        elsif char == '#' && @pos + 1 < @input.length && @input[@pos + 1] == '{'
+          add_token(token_type, string_start, @pos - 1) if @pos > string_start
+          start_interpolation
+          return
+        elsif opening && char == opening
+          frame.depth += 1
+          @pos += 1
+        elsif char == closing
+          if frame.depth > 0
+            frame.depth -= 1
+            @pos += 1
+          else
+            add_token(token_type, string_start, @pos)
+            @pos += 1
+            @stack.pop
+            return
+          end
+        else
+          @pos += 1
+        end
+      end
+
+      # Incomplete - emit what we have
+      add_token(token_type, string_start, @pos - 1) if @pos > string_start
     end
 
     def start_interpolation
@@ -194,60 +312,22 @@ module Parser
 
     def continue_array
       while @pos < @input.length
-        char = @input[@pos]
-
-        case char
-        when '['
-          # TODO: emit new array frames
-          @stack.last.depth += 1
-          start_parse
-        when ']'
-          # TODO: pop array frames
-          # Let parse_operator handle depth decrement and popping via pop_bracket_frame
-          start_parse
-          # Check if frame was popped (stack empty or different frame type)
-          return if @stack.empty? || @stack.last.type != :array
-        else
-          start_parse
-        end
+        start_parse
+        return if @stack.empty? || @stack.last.type != :array
       end
     end
 
     def continue_hash
       while @pos < @input.length
-        char = @input[@pos]
-
-        case char
-        when '{'
-          @stack.last.depth += 1
-          start_parse
-        when '}'
-          # Let parse_operator handle depth decrement and popping via pop_bracket_frame_smart
-          start_parse
-          # Check if frame was popped (stack empty or different frame type)
-          return if @stack.empty? || @stack.last.type != :hash
-        else
-          start_parse
-        end
+        start_parse
+        return if @stack.empty? || @stack.last.type != :hash
       end
     end
 
     def continue_paren
       while @pos < @input.length
-        char = @input[@pos]
-
-        case char
-        when '('
-          @stack.last.depth += 1
-          start_parse
-        when ')'
-          # Let parse_operator handle depth decrement and popping via pop_bracket_frame
-          start_parse
-          # Check if frame was popped (stack empty or different frame type)
-          return if @stack.empty? || @stack.last.type != :paren
-        else
-          start_parse
-        end
+        start_parse
+        return if @stack.empty? || @stack.last.type != :paren
       end
     end
 
@@ -348,6 +428,13 @@ module Parser
       end
     end
 
+    def continue_lambda
+      while @pos < @input.length
+        start_parse
+        return if @stack.empty? || @stack.last.type != :lambda
+      end
+    end
+
     def continue_begin
       while @pos < @input.length
         start_parse
@@ -415,19 +502,33 @@ module Parser
       end
 
       add_token(:string, start_pos, @pos - 1)
+      @last_significant_token = :string
     end
 
     def parse_symbol
       start_pos = @pos
       @pos += 1 # skip ':'
 
-      # Symbol can be quoted or identifier-like
       if @pos < @input.length
-        if @input[@pos] == '"' || @input[@pos] == "'"
-          # Quoted symbol like :"foo bar"
+        if @input[@pos] == '"'
+          # Double-quoted symbol like :"foo #{bar}" - supports interpolation
+          # Emit the : and opening " as symbol token, then handle like double-quoted string
+          @pos += 1 # skip "
+          add_token(:symbol, start_pos, @pos - 1)
+          @stack << Frame.new(:string_double)
+          continue_string_double(@pos)
+          return
+        elsif @input[@pos] == "'"
+          # Single-quoted symbol like :'foo bar' - no interpolation
           quote = @input[@pos]
           @pos += 1
-          @pos += 1 while @pos < @input.length && @input[@pos] != quote
+          while @pos < @input.length && @input[@pos] != quote
+            if @input[@pos] == '\\'
+              @pos += 2
+            else
+              @pos += 1
+            end
+          end
           @pos += 1 if @pos < @input.length # skip closing quote
         else
           # Regular symbol like :foo
@@ -441,49 +542,38 @@ module Parser
     def parse_operator
       op = find_operator(@input[@pos..])
 
-      add_token(:operator, @pos, @pos + op.length - 1)
+      token_type = op == '->' ? :lambda : :operator
+      add_token(token_type, @pos, @pos + op.length - 1)
       @pos += op.length
 
-      # Handle bracket frame push/pop (only when not inside string/interpolation)
-      # TODO: this method should never be called in a string.
-      # TODO: for interpolation we should be pushing these.
-      raise "This shouldn't be a string" if %i[string_double string_single].include?(@stack.last&.type)
+      # Endless method detection: def foo(x) = expr
+      @endless_method_possible = false if op == ';'
+      if op == '=' && @endless_method_possible && @stack.last&.type == :def
+        @stack.pop
+        @endless_method_possible = false
+      end
+
+      # Handle bracket frame push/pop
 
       case op
       when '['
-        # Only push if not already inside an array frame
-        @stack << Frame.new(:array, 1) # TODO: depth
+        @stack << Frame.new(:array, 0)
         @last_significant_token = :bracket_open
       when ']'
         pop_bracket_frame(:array)
+        @last_significant_token = :bracket_close
       when '{'
-        # Only push if not already inside a hash frame
-        unless @stack.last&.type == :hash
-          # TODO: block_context
-          if block_context?
-            # For Phase 3: push_block_frame
-            # For now, treat as hash
-            @stack << Frame.new(:hash, 1)
-          else
-            @stack << Frame.new(:hash, 1)
-          end
-        end
+        @stack << Frame.new(:hash, 0)
         @last_significant_token = :brace_open
-      when '}'
-        pop_bracket_frame_smart
       when '('
-        # Only push if not already inside a paren frame
-        # TODO: push new frames
-        @stack << Frame.new(:paren, 1) unless @stack.last&.type == :paren
+        @stack << Frame.new(:paren, 0)
         @last_significant_token = :paren_open
       when ')'
         pop_bracket_frame(:paren)
+        @last_significant_token = :paren_close
       else
         update_last_significant_token(op)
       end
-      # else
-      #   update_last_significant_token(char)
-      # end
     end
 
     def parse_identifier
@@ -495,7 +585,9 @@ module Parser
       value = @input[start_pos..@pos - 1]
 
       # Determine token type: constant (starts with uppercase), keyword, or identifier
-      token_type = if first_char >= 'A' && first_char <= 'Z'
+      token_type = if value == 'BEGIN' || value == 'END'
+                     :keyword
+                   elsif first_char >= 'A' && first_char <= 'Z'
                      :constant
                    elsif KEYWORDS.include?(value)
                      :keyword
@@ -510,11 +602,39 @@ module Parser
         handle_keyword_frame(value)
       end
 
-      # Track identifier for hash vs block detection
-      if token_type == :identifier
+      # Track token type for hash vs block detection and regex disambiguation
+      if token_type == :identifier || token_type == :constant
         @prev_significant_token = @last_significant_token
         @last_significant_token = :identifier
+      elsif token_type == :keyword
+        @prev_significant_token = @last_significant_token
+        case value
+        when 'self', 'true', 'false', 'nil', 'end'
+          @last_significant_token = :keyword_value
+        else
+          @last_significant_token = :keyword
+        end
       end
+    end
+
+    def parse_instance_or_class_variable
+      start_pos = @pos
+      @pos += 1 # skip first @
+
+      # Check for class variable (@@)
+      type = :ivar
+      if @pos < @input.length && @input[@pos] == '@'
+        type = :cvar
+        @pos += 1 # skip second @
+      end
+
+      # Read identifier part
+      while @pos < @input.length && identifier_char?(@input[@pos])
+        @pos += 1
+      end
+
+      add_token(type, start_pos, @pos - 1)
+      @last_significant_token = type
     end
 
     def parse_global
@@ -535,6 +655,83 @@ module Parser
       end
 
       add_token(:global, start_pos, @pos - 1)
+      @last_significant_token = :global
+    end
+
+    def parse_character_literal_or_operator
+      # ?a is a character literal when ? is followed immediately by a char (no space).
+      # x ? y : z is ternary when ? is followed by whitespace.
+      if @pos + 1 < @input.length && !whitespace?(@input[@pos + 1])
+        # Could be character literal - check previous token to disambiguate
+        # After identifier, number, ), ] it's ternary; otherwise character literal
+        prev = @last_significant_token
+        if prev == :identifier || prev == :number || prev == :paren_close || prev == :bracket_close
+          parse_operator
+        else
+          parse_character_literal
+        end
+      else
+        parse_operator
+      end
+    end
+
+    def parse_character_literal
+      start_pos = @pos
+      @pos += 1 # skip ?
+      if @pos < @input.length
+        if @input[@pos] == '\\'
+          @pos += 2 # escape sequence like ?\n
+        else
+          @pos += 1 # single char like ?a
+        end
+      end
+      add_token(:string, start_pos, @pos - 1)
+    end
+
+    def regex_start_context?
+      # / is a regex when preceded by operators, keywords, or at start of expression
+      # / is division after identifiers, numbers, closing brackets, value-producing keywords
+      case @last_significant_token
+      when :identifier, :number, :paren_close, :bracket_close, :keyword_value, :ivar, :cvar, :global, :string, :symbol
+        false
+      else
+        true
+      end
+    end
+
+    def start_regex
+      @stack << Frame.new(:regex)
+      start_pos = @pos
+      @pos += 1 # skip opening /
+      continue_regex(start_pos)
+    end
+
+    def continue_regex(string_start)
+      while @pos < @input.length
+        char = @input[@pos]
+
+        if char == '\\'
+          @pos += 2
+        elsif char == '#' && @pos + 1 < @input.length && @input[@pos + 1] == '{'
+          add_token(:regex, string_start, @pos - 1) if @pos > string_start
+          start_interpolation
+          return
+        elsif char == '/'
+          # Closing delimiter - consume modifier flags (i, m, x, o, s, u, e, n)
+          @pos += 1
+          while @pos < @input.length && 'imxosuen'.include?(@input[@pos])
+            @pos += 1
+          end
+          add_token(:regex, string_start, @pos - 1)
+          @stack.pop
+          return
+        else
+          @pos += 1
+        end
+      end
+
+      # Incomplete regex
+      add_token(:regex, string_start, @pos - 1) if @pos > string_start
     end
 
     def parse_percent_literal
@@ -544,7 +741,13 @@ module Parser
       return parse_operator if @pos >= @input.length
 
       # Get the type character (w, W, i, I, q, Q, r, s, x, etc.)
-      type_char = @input[@pos] # TODO: use type_char
+      type_char = @input[@pos]
+
+      # Check if type_char is a valid percent literal type
+      unless 'wWiIqQrsxl'.include?(type_char)
+        return parse_operator
+      end
+
       @pos += 1
 
       return parse_operator if @pos >= @input.length
@@ -561,19 +764,36 @@ module Parser
 
       @pos += 1 # skip opening delimiter
 
-      # Find the closing delimiter
-      while @pos < @input.length
-        if @input[@pos] == '\\'
-          @pos += 2 # skip escape sequence
-        elsif @input[@pos] == closing_delimiter
-          @pos += 1 # include closing delimiter
-          break
-        else
-          @pos += 1
+      # Interpolating types get frame-based parsing; non-interpolating are single tokens
+      if 'QWIxr'.include?(type_char)
+        token_type = case type_char
+                     when 'Q', 'r' then :string
+                     when 'x' then :backtick
+                     else :array_literal  # W, I
+                     end
+        @stack << Frame.new(:percent_interp, 0, closing_delimiter, token_type)
+        continue_percent_interp(start_pos)
+      else
+        # Non-interpolating - consume as single token
+        while @pos < @input.length
+          if @input[@pos] == '\\'
+            @pos += 2 # skip escape sequence
+          elsif @input[@pos] == closing_delimiter
+            @pos += 1 # include closing delimiter
+            break
+          else
+            @pos += 1
+          end
         end
-      end
 
-      add_token(:array_literal, start_pos, @pos - 1)
+        token_type = case type_char
+                     when 'q' then :string
+                     when 's' then :symbol
+                     else :array_literal  # w, i
+                     end
+
+        add_token(token_type, start_pos, @pos - 1)
+      end
     end
 
     def add_token(type, start_pos, end_pos)
@@ -619,6 +839,7 @@ module Parser
         # Peek ahead to get method name
         method_name = peek_next_identifier
         @stack << Frame.new(:def, 0, method_name)
+        @endless_method_possible = true
       when 'class'
         # Peek ahead to get class name
         class_name = peek_next_constant
@@ -646,7 +867,13 @@ module Parser
       when 'begin'
         @stack << Frame.new(:begin, 0)
       when 'do'
-        @stack << Frame.new(:do_block, 0)
+        # Check if preceded by `lambda` to push :lambda frame
+        prev_token = @tokens[0..-2].reverse.find { |t| t[:type] != :whitespace }
+        if prev_token && prev_token[:value] == 'lambda'
+          @stack << Frame.new(:lambda, 0)
+        else
+          @stack << Frame.new(:do_block, 0)
+        end
       when 'end'
         pop_end_frame
       end
@@ -701,7 +928,7 @@ module Parser
       frame = @stack.last
 
       # Keywords that pair with 'end'
-      end_keywords = [:def, :class, :module, :if, :unless, :case, :while, :until, :for, :do_block, :begin]
+      end_keywords = [:def, :class, :module, :if, :unless, :case, :while, :until, :for, :do_block, :begin, :lambda]
 
       # TODO: this makes no sense
       if end_keywords.include?(frame.type)
@@ -727,13 +954,10 @@ module Parser
       return unless @stack.last
 
       if [:hash, :do_block].include?(@stack.last.type)
-        @stack.last.depth -= 1
-        @stack.pop if @stack.last.depth == 0
+        @stack.pop
       end
     end
 
-    # TODO: we'll also need closing_square ], and closing_paren )
-    # MARC: this stays
     def parse_closing_brace
       case @stack.last&.type
       when :interpolation
@@ -742,13 +966,12 @@ module Parser
         @pos += 1
       when :hash
         @stack.pop
-        # TODO: hash_end so we can colorize brackets
         @tokens << { type: :operator, value: '}', start: @pos, end: @pos }
         @pos += 1
       else
-        # TODO: handle others (block, lambda)
-        # TODO: error type
-        raise "Unhandled closing type #{@stack.last&.type.inspect}"
+        # Graceful error recovery for mismatched or unexpected }
+        @tokens << { type: :operator, value: '}', start: @pos, end: @pos }
+        @pos += 1
       end
     end
 
@@ -831,17 +1054,16 @@ module Parser
       end
     end
 
-    def update_last_significant_token(char)
+    def update_last_significant_token(op)
       @prev_significant_token = @last_significant_token
 
-      case char
+      case op
       when ',' then @last_significant_token = :comma
       when '=>' then @last_significant_token = :hash_rocket
       when ':' then @last_significant_token = :colon
       when '=' then @last_significant_token = :assignment
       when '.' then @last_significant_token = :dot
-      else
-        # Other operators don't affect hash vs block detection
+      else @last_significant_token = :operator
       end
     end
   end
@@ -852,11 +1074,12 @@ module Parser
     def initialize(input)
       stack = []
       @lines = input.lines.map do |line|
-        # TODO: should i be stripping new lines off of this?
         parser = RubyLine.new(line, stack).parse
         stack = parser.stack
         parser
       end
+      # Ensure at least one line for empty input
+      @lines = [RubyLine.new('', []).parse] if @lines.empty?
     end
   end
 end

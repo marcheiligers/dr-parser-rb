@@ -37,7 +37,6 @@ end
 def test_multiline_hash_basic(_args, assert)
   parser1 = Parser::RubyLine.new('{a:').parse
   assert.equal!(parser1.stack.map(&:type), [:hash])
-  assert.equal!(parser1.stack.last.depth, 1)
 
   parser2 = Parser::RubyLine.new('1}', parser1.stack).parse
   assert.true!(parser2.stack.empty?)
@@ -54,8 +53,7 @@ end
 
 def test_multiline_hash_nested(_args, assert)
   parser1 = Parser::RubyLine.new('{{a:').parse
-  assert.equal!(parser1.stack.map(&:type), [:hash])
-  assert.equal!(parser1.stack.last.depth, 2)
+  assert.equal!(parser1.stack.map(&:type), [:hash, :hash])
 
   parser2 = Parser::RubyLine.new('1}}', parser1.stack).parse
   assert.true!(parser2.stack.empty?)
