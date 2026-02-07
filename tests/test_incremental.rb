@@ -383,3 +383,66 @@ def test_incremental_reparse_budget_partial_reparse(_args, assert)
   # With 100 lines to reparse, it should still be dirty after 0ms budget
   assert.true! parser.dirty?, "0ms budget should not clean 100 dirty lines"
 end
+
+# --- Fingerprinting ---
+
+def test_incremental_fingerprints_stored(_args, assert)
+  parser = Parser::Ruby.new("def foo\n  1\nend\n")
+  line = parser.lines[0]
+  assert.true! !line.input_fp.nil?, "input_fp should be stored"
+  assert.true! !line.output_fp.nil?, "output_fp should be stored"
+end
+
+def test_incremental_fingerprints_differ_for_different_stacks(_args, assert)
+  parser = Parser::Ruby.new("def foo\n  1\nend\n")
+  # Line 0: input [] -> output [:def]
+  assert.true! parser.lines[0].input_fp != parser.lines[0].output_fp,
+    "empty stack and [:def] stack should have different fingerprints"
+end
+
+def test_incremental_fingerprints_match_for_same_stacks(_args, assert)
+  parser = Parser::Ruby.new("def foo\n  x = 1\n  y = 2\nend\n")
+  # Lines 1 and 2 both have input [:def] and output [:def]
+  assert.equal! parser.lines[1].input_fp, parser.lines[2].input_fp,
+    "same input stacks should have same fingerprint"
+  assert.equal! parser.lines[1].output_fp, parser.lines[2].output_fp,
+    "same output stacks should have same fingerprint"
+end
+
+def test_incremental_fingerprints_updated_after_replace(_args, assert)
+  parser = Parser::Ruby.new("x = 1\ny = 2\n")
+  old_fp = parser.lines[0].output_fp
+
+  # Open a string - output stack changes
+  parser.replace_lines(0, 1, ["x = \"\n"])
+  assert.true! parser.lines[0].output_fp != old_fp,
+    "fingerprint should change when stack changes"
+end
+
+def test_incremental_fingerprints_updated_after_reparse(_args, assert)
+  parser = Parser::Ruby.new("x = 1\ny = 2\nz = 3\n")
+  parser.replace_lines(0, 1, ["x = \"\n"])
+  assert.true! parser.dirty?
+
+  old_line1_fp = parser.lines[1].input_fp
+  parser.reparse_next_line
+
+  assert.true! parser.lines[1].input_fp != old_line1_fp,
+    "fingerprint should update after reparse"
+end
+
+def test_incremental_convergence_with_fingerprints(_args, assert)
+  # Verify convergence still works correctly with fingerprinting
+  code = "def foo\n  x = 1\n  y = 2\nend\n"
+  parser = Parser::Ruby.new(code)
+
+  # Edit body - no stack change
+  parser.replace_lines(1, 1, ["  x = 99\n"])
+  assert.false! parser.dirty?, "fingerprint-accelerated convergence should work"
+
+  # Edit to change stack, then fix it
+  parser.replace_lines(1, 1, ["  if true\n"])
+  assert.true! parser.dirty?
+  parser.replace_lines(1, 1, ["  x = 99\n"])
+  assert.false! parser.dirty?, "fingerprint validation should clear stale dirty"
+end

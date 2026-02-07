@@ -1068,7 +1068,7 @@ module Parser
     end
   end
 
-  ParsedLine = Struct.new(:text, :tokens, :input_stack, :output_stack) do
+  ParsedLine = Struct.new(:text, :tokens, :input_stack, :output_stack, :input_fp, :output_fp) do
     alias_method :stack, :output_stack
   end
 
@@ -1077,16 +1077,22 @@ module Parser
 
     def initialize(input)
       stack = []
+      in_fp = stack_fingerprint(stack)
       @lines = input.lines.map do |line|
         input_stack = deep_copy_stack(stack)
         parser = RubyLine.new(line, stack).parse
         stack = parser.stack
-        ParsedLine.new(line, parser.tokens, input_stack, deep_copy_stack(stack))
+        out_stack = deep_copy_stack(stack)
+        out_fp = stack_fingerprint(out_stack)
+        pl = ParsedLine.new(line, parser.tokens, input_stack, out_stack, in_fp, out_fp)
+        in_fp = out_fp
+        pl
       end
       # Ensure at least one line for empty input
       if @lines.empty?
         parser = RubyLine.new('', []).parse
-        @lines = [ParsedLine.new('', parser.tokens, [], deep_copy_stack(parser.stack))]
+        out_stack = deep_copy_stack(parser.stack)
+        @lines = [ParsedLine.new('', parser.tokens, [], out_stack, in_fp, stack_fingerprint(out_stack))]
       end
       @dirty_from = nil
     end
@@ -1102,10 +1108,11 @@ module Parser
     def replace_lines(start, count, new_texts)
       # Determine input stack for first new line
       input_stack = start > 0 ? @lines[start - 1].output_stack : []
+      in_fp = start > 0 ? @lines[start - 1].output_fp : stack_fingerprint([])
 
-      # Save the input stack of the first unchanged line after the edit (if any)
+      # Save the fingerprint of the first unchanged line after the edit (if any)
       old_next = start + count
-      old_next_input = old_next < @lines.length ? @lines[old_next].input_stack : nil
+      old_next_fp = old_next < @lines.length ? @lines[old_next].input_fp : nil
 
       # Parse each new line sequentially
       stack = input_stack
@@ -1113,7 +1120,11 @@ module Parser
         is = deep_copy_stack(stack)
         parser = RubyLine.new(text, stack).parse
         stack = parser.stack
-        ParsedLine.new(text, parser.tokens, is, deep_copy_stack(stack))
+        out_stack = deep_copy_stack(stack)
+        out_fp = stack_fingerprint(out_stack)
+        pl = ParsedLine.new(text, parser.tokens, is, out_stack, in_fp, out_fp)
+        in_fp = out_fp
+        pl
       end
 
       # Splice new ParsedLines into @lines
@@ -1123,8 +1134,11 @@ module Parser
       first_unchanged = start + new_parsed.length
       new_dirty = nil
       if first_unchanged < @lines.length
-        last_output = new_parsed.empty? ? input_stack : new_parsed.last.output_stack
-        unless stacks_equal?(last_output, old_next_input)
+        last_fp = new_parsed.empty? ? stack_fingerprint(input_stack) : new_parsed.last.output_fp
+        unless last_fp == old_next_fp && stacks_equal?(
+          new_parsed.empty? ? input_stack : new_parsed.last.output_stack,
+          @lines[first_unchanged].input_stack
+        )
           new_dirty = first_unchanged
         end
       end
@@ -1150,8 +1164,11 @@ module Parser
 
       # Validate: check if dirty_from is actually dirty
       if @dirty_from && @dirty_from < @lines.length
-        prev_output = @dirty_from > 0 ? @lines[@dirty_from - 1].output_stack : []
-        @dirty_from = nil if stacks_equal?(prev_output, @lines[@dirty_from].input_stack)
+        prev_fp = @dirty_from > 0 ? @lines[@dirty_from - 1].output_fp : stack_fingerprint([])
+        if prev_fp == @lines[@dirty_from].input_fp
+          prev_output = @dirty_from > 0 ? @lines[@dirty_from - 1].output_stack : []
+          @dirty_from = nil if stacks_equal?(prev_output, @lines[@dirty_from].input_stack)
+        end
       end
     end
 
@@ -1164,24 +1181,27 @@ module Parser
 
       line = @lines[@dirty_from]
       new_input = @dirty_from > 0 ? @lines[@dirty_from - 1].output_stack : []
+      new_input_fp = @dirty_from > 0 ? @lines[@dirty_from - 1].output_fp : stack_fingerprint([])
 
-      # Convergence check: if input stack hasn't changed, no need to reparse
-      if stacks_equal?(new_input, line.input_stack)
+      # Fast convergence check: fingerprint mismatch means definitely dirty, skip structural check
+      if new_input_fp == line.input_fp && stacks_equal?(new_input, line.input_stack)
         @dirty_from = nil
         return false
       end
 
       # Reparse the line
-      old_output = line.output_stack
+      old_output_fp = line.output_fp
       parser = RubyLine.new(line.text, new_input).parse
+      out_stack = deep_copy_stack(parser.stack)
+      out_fp = stack_fingerprint(out_stack)
       @lines[@dirty_from] = ParsedLine.new(
         line.text, parser.tokens,
-        deep_copy_stack(new_input),
-        deep_copy_stack(parser.stack)
+        deep_copy_stack(new_input), out_stack,
+        new_input_fp, out_fp
       )
 
-      # Check convergence
-      if stacks_equal?(parser.stack, old_output)
+      # Check convergence: fingerprint mismatch means definitely not converged
+      if out_fp == old_output_fp && stacks_equal?(parser.stack, line.output_stack)
         @dirty_from = nil
       else
         @dirty_from += 1
@@ -1215,6 +1235,10 @@ module Parser
 
     def deep_copy_stack(stack)
       stack.map { |f| RubyLine::Frame.new(f.type, f.depth, f.name, f.modifier) }
+    end
+
+    def stack_fingerprint(stack)
+      stack.map { |f| [f.type, f.depth, f.name, f.modifier] }.hash
     end
 
     def stacks_equal?(a, b)
