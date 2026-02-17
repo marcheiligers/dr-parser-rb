@@ -1068,18 +1068,189 @@ module Parser
     end
   end
 
+  ParsedLine = Struct.new(:text, :tokens, :input_stack, :output_stack, :input_fp, :output_fp) do
+    alias_method :stack, :output_stack
+  end
+
   class Ruby
-    attr_reader :lines
+    attr_reader :lines, :dirty_from
 
     def initialize(input)
       stack = []
+      in_fp = stack_fingerprint(stack)
       @lines = input.lines.map do |line|
+        input_stack = deep_copy_stack(stack)
         parser = RubyLine.new(line, stack).parse
         stack = parser.stack
-        parser
+        out_stack = deep_copy_stack(stack)
+        out_fp = stack_fingerprint(out_stack)
+        pl = ParsedLine.new(line, parser.tokens, input_stack, out_stack, in_fp, out_fp)
+        in_fp = out_fp
+        pl
       end
       # Ensure at least one line for empty input
-      @lines = [RubyLine.new('', []).parse] if @lines.empty?
+      if @lines.empty?
+        parser = RubyLine.new('', []).parse
+        out_stack = deep_copy_stack(parser.stack)
+        @lines = [ParsedLine.new('', parser.tokens, [], out_stack, in_fp, stack_fingerprint(out_stack))]
+      end
+      @dirty_from = nil
+    end
+
+    def dirty?
+      !@dirty_from.nil?
+    end
+
+    def line_count
+      @lines.length
+    end
+
+    def replace_lines(start, count, new_texts)
+      # Determine input stack for first new line
+      input_stack = start > 0 ? @lines[start - 1].output_stack : []
+      in_fp = start > 0 ? @lines[start - 1].output_fp : stack_fingerprint([])
+
+      # Save the fingerprint of the first unchanged line after the edit (if any)
+      old_next = start + count
+      old_next_fp = old_next < @lines.length ? @lines[old_next].input_fp : nil
+
+      # Parse each new line sequentially
+      stack = input_stack
+      new_parsed = new_texts.map do |text|
+        is = deep_copy_stack(stack)
+        parser = RubyLine.new(text, stack).parse
+        stack = parser.stack
+        out_stack = deep_copy_stack(stack)
+        out_fp = stack_fingerprint(out_stack)
+        pl = ParsedLine.new(text, parser.tokens, is, out_stack, in_fp, out_fp)
+        in_fp = out_fp
+        pl
+      end
+
+      # Splice new ParsedLines into @lines
+      @lines[start, count] = new_parsed
+
+      # Determine if subsequent lines are dirty from this edit
+      first_unchanged = start + new_parsed.length
+      new_dirty = nil
+      if first_unchanged < @lines.length
+        last_fp = new_parsed.empty? ? stack_fingerprint(input_stack) : new_parsed.last.output_fp
+        unless last_fp == old_next_fp && stacks_equal?(
+          new_parsed.empty? ? input_stack : new_parsed.last.output_stack,
+          @lines[first_unchanged].input_stack
+        )
+          new_dirty = first_unchanged
+        end
+      end
+
+      # Merge with existing dirty_from
+      # Adjust existing dirty_from for line count changes
+      delta = new_texts.length - count
+      if @dirty_from
+        if @dirty_from >= old_next
+          # Existing dirty was after the edit range - adjust for line count change
+          @dirty_from += delta
+        elsif @dirty_from >= start
+          # Existing dirty was inside the edited range - it's been replaced
+          @dirty_from = nil
+        end
+        # If before start, keep as-is
+      end
+
+      # Combine: take the earliest dirty
+      if new_dirty
+        @dirty_from = @dirty_from.nil? ? new_dirty : [@dirty_from, new_dirty].min
+      end
+
+      # Validate: check if dirty_from is actually dirty
+      if @dirty_from && @dirty_from < @lines.length
+        prev_fp = @dirty_from > 0 ? @lines[@dirty_from - 1].output_fp : stack_fingerprint([])
+        if prev_fp == @lines[@dirty_from].input_fp
+          prev_output = @dirty_from > 0 ? @lines[@dirty_from - 1].output_stack : []
+          @dirty_from = nil if stacks_equal?(prev_output, @lines[@dirty_from].input_stack)
+        end
+      end
+    end
+
+    def reparse_next_line
+      return false if @dirty_from.nil?
+      if @dirty_from >= @lines.length
+        @dirty_from = nil
+        return false
+      end
+
+      line = @lines[@dirty_from]
+      new_input = @dirty_from > 0 ? @lines[@dirty_from - 1].output_stack : []
+      new_input_fp = @dirty_from > 0 ? @lines[@dirty_from - 1].output_fp : stack_fingerprint([])
+
+      # Fast convergence check: fingerprint mismatch means definitely dirty, skip structural check
+      if new_input_fp == line.input_fp && stacks_equal?(new_input, line.input_stack)
+        @dirty_from = nil
+        return false
+      end
+
+      # Reparse the line
+      old_output_fp = line.output_fp
+      parser = RubyLine.new(line.text, new_input).parse
+      out_stack = deep_copy_stack(parser.stack)
+      out_fp = stack_fingerprint(out_stack)
+      @lines[@dirty_from] = ParsedLine.new(
+        line.text, parser.tokens,
+        deep_copy_stack(new_input), out_stack,
+        new_input_fp, out_fp
+      )
+
+      # Check convergence: fingerprint mismatch means definitely not converged
+      if out_fp == old_output_fp && stacks_equal?(parser.stack, line.output_stack)
+        @dirty_from = nil
+      else
+        @dirty_from += 1
+        @dirty_from = nil if @dirty_from >= @lines.length
+      end
+
+      dirty?
+    end
+
+    def mark_dirty!(from = 0)
+      from = [[from, 0].max, @lines.length - 1].min
+      @dirty_from = @dirty_from.nil? ? from : [from, @dirty_from].min
+    end
+
+    def reparse!
+      while dirty?
+        reparse_next_line
+      end
+    end
+
+    def reparse_budget(ms)
+      return unless dirty?
+
+      deadline = Time.now.to_f + (ms / 1000.0)
+      while dirty? && Time.now.to_f < deadline
+        reparse_next_line
+      end
+    end
+
+    private
+
+    def deep_copy_stack(stack)
+      stack.map { |f| RubyLine::Frame.new(f.type, f.depth, f.name, f.modifier) }
+    end
+
+    def stack_fingerprint(stack)
+      stack.map { |f| [f.type, f.depth, f.name, f.modifier] }.hash
+    end
+
+    def stacks_equal?(a, b)
+      return true if a.equal?(b)
+      return false unless a.length == b.length
+
+      a.length.times do |i|
+        fa = a[i]
+        fb = b[i]
+        return false unless fa.type == fb.type && fa.depth == fb.depth && fa.name == fb.name && fa.modifier == fb.modifier
+      end
+      true
     end
   end
 end

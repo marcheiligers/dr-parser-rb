@@ -10,180 +10,258 @@ COLORS = {
   identifier: { r: 224, g: 224, b: 224 },   # White
   operator: { r: 171, g: 178, b: 191 },     # Light gray
   global: { r: 224, g: 108, b: 117 },       # Red
-  interpolation_start: { r: 152, g: 195, b: 121 },  # Green
-  interpolation_end: { r: 152, g: 195, b: 121 },    # Green
+  ivar: { r: 224, g: 108, b: 117 },         # Red
+  cvar: { r: 224, g: 108, b: 117 },         # Red
+  interpolation_start: { r: 86, g: 182, b: 194 },  # Cyan
+  interpolation_end: { r: 86, g: 182, b: 194 },    # Cyan
   array_literal: { r: 152, g: 195, b: 121 }, # Green
   heredoc_start: { r: 152, g: 195, b: 121 },  # Green
   heredoc_line: { r: 152, g: 195, b: 121 },   # Green
-  heredoc_end: { r: 152, g: 195, b: 121 }     # Green
+  heredoc_end: { r: 152, g: 195, b: 121 },    # Green
+  backtick: { r: 152, g: 195, b: 121 },       # Green
+  regex: { r: 152, g: 195, b: 121 },          # Green
+  lambda: { r: 197, g: 134, b: 192 }          # Purple
 }
 
-SAMPLE_CODE = <<~RUBYCODE.freeze
-  class DragonGame
-    PLAYER = 'marc'
+DEFAULT_COLOR = { r: 224, g: 224, b: 224 }
 
-    def tick(args)
-      if args.state.tick_count == 0
-        args.state.message = <<~TEXT.capitalize # screaming
-          Welcome to DragonRuby, \#{PLAYER}!
-        TEXT
-        args.state.player = {
-          x: 640, y: 360,
-          sprite: "sprites/\#{PLAYER}.png"
-        }
-      end
-
-      player = args.state.player
-      player.x += 5 if args.inputs.right
-
-      args.outputs.sprites << player
-    end
+INITIAL_CODE = <<~CODE
+class Demo
+  def hello
+    puts "world"
   end
-RUBYCODE
 
-def tick args
-  # Set background color (dark theme)
+  def add(a, b)
+    a + b
+  end
+end
+CODE
+
+DEMO_CYCLE = 1320   # 22 seconds at 60fps
+REPARSE_RATE = 6    # reparse one dirty line every 6 ticks
+
+def tick(args)
   args.outputs.background_color = [40, 44, 52]
 
+  args.state.edits ||= $gtk.parse_json_file('app/sample.json')
+
+  demo_tick = args.state.tick_count % DEMO_CYCLE
+
+  # Reset at cycle start
+  if demo_tick == 0
+    args.state.parser = Parser::Ruby.new(INITIAL_CODE)
+    args.state.edit_index = 0
+    args.state.status = 'Loaded initial code'
+    args.state.status_tick = 0
+  end
+
+  parser = args.state.parser
+  edits = args.state.edits
+
+  # Apply scheduled edits
+  while args.state.edit_index < edits.length
+    edit = edits[args.state.edit_index]
+    break if edit['tick'] > demo_tick
+    parser.replace_lines(edit['start'], edit['count'], edit['lines'])
+    args.state.status = edit['label']
+    args.state.status_tick = demo_tick
+    args.state.edit_index += 1
+  end
+
+  # Background reparse: one line every REPARSE_RATE ticks
+  if demo_tick % REPARSE_RATE == 0 && parser.dirty?
+    parser.reparse_next_line
+  end
+
+  render_all(args, parser, demo_tick)
+end
+
+def render_all(args, parser, demo_tick)
   # Title
   args.outputs.labels << {
-    x: 640,
-    y: 700,
-    text: 'Multiline Ruby Parser Demo',
-    size_px: 24,
-    alignment_enum: 1,
+    x: 640, y: 700,
+    text: 'Incremental Parser Demo',
+    size_px: 22, alignment_enum: 1,
     r: 200, g: 200, b: 200
   }
 
   # Subtitle
   args.outputs.labels << {
-    x: 640,
-    y: 670,
-    text: 'Stack-based parsing with heredocs, classes, methods, control flow & more!',
-    size_px: 14,
-    alignment_enum: 1,
-    r: 150, g: 150, b: 150
+    x: 640, y: 674,
+    text: 'Watch dirty lines propagate and converge',
+    size_px: 13, alignment_enum: 1,
+    r: 100, g: 100, b: 100
   }
 
-  # Divider line
-  args.outputs.lines << {
-    x: 640, y: 0,
-    x2: 640, y2: 720,
-    r: 80, g: 80, b: 80
-  }
+  # Divider
+  args.outputs.lines << { x: 620, y: 10, x2: 620, y2: 650, r: 60, g: 60, b: 60 }
 
-  # LEFT HALF: Syntax-highlighted code
-  y = 630
-  line_height = 22
-  x_left = 30
-  size = 16
+  render_code(args, parser)
+  render_status(args, parser, demo_tick)
 
-  parser = Parser::Ruby.new(SAMPLE_CODE)
+  args.outputs.primitives << GTK.framerate_diagnostics_primitives
+end
 
-  # Render code lines
-  parser.lines.each do |line|
-    x_offset = x_left
-    line.tokens.each do |token|
-      color = COLORS[token[:type]] || { r: 255, g: 255, b: 255 }
+def render_code(args, parser)
+  line_height = 24
+  y_start = 636
+  x_code = 55
+  size = 14
 
-      args.outputs.labels << {
-        x: x_offset,
-        y: y,
-        text: token[:value],
-        size_px: size,
-        **color
+  parser.lines.each_with_index do |line, i|
+    y = y_start - (i * line_height)
+
+    # Dirty line background
+    if parser.dirty_from && i >= parser.dirty_from
+      args.outputs.solids << {
+        x: 38, y: y - 6, w: 572, h: line_height,
+        r: 100, g: 30, b: 30, a: 140
       }
-
-      # Calculate the exact width of this token
-      width, _ = $gtk.calcstringbox(token[:value], size_px: size)
-      x_offset += width
     end
 
-    # Show stack state on the right edge of left half
+    # Line number
+    args.outputs.labels << {
+      x: 18, y: y,
+      text: (i + 1).to_s.rjust(2),
+      size_px: 11,
+      r: 70, g: 70, b: 70
+    }
+
+    # Render tokens
+    x_offset = x_code
+    line.tokens.each do |tok|
+      display = tok[:value].chomp
+      next if display.empty?
+
+      w, _ = $gtk.calcstringbox(display, size_px: size)
+
+      unless tok[:type] == :whitespace
+        color = COLORS[tok[:type]] || DEFAULT_COLOR
+        args.outputs.labels << {
+          x: x_offset, y: y,
+          text: display,
+          size_px: size,
+          **color
+        }
+      end
+
+      x_offset += w
+    end
+
+    # Stack indicator
     unless line.stack.empty?
       stack_text = line.stack.map(&:type).join(', ')
       args.outputs.labels << {
-        x: 600,
-        y: y,
+        x: 608, y: y,
         text: "[#{stack_text}]",
-        size_px: 10,
-        alignment_enum: 2,
-        r: 200, g: 200, b: 200
+        size_px: 9, alignment_enum: 2,
+        r: 60, g: 60, b: 60
       }
     end
-
-    y -= line_height
   end
+end
 
-  # RIGHT HALF: Token breakdown and stats
-  y_right = 630
-  x_right = 670
+def render_status(args, parser, demo_tick)
+  x = 650
+  y = 636
+  gap = 26
 
+  # Last action
   args.outputs.labels << {
-    x: x_right,
-    y: y_right,
-    text: 'Token Breakdown',
-    size_px: 18,
-    r: 200, g: 200, b: 200
+    x: x, y: y,
+    text: 'Last Action:',
+    size_px: 14,
+    r: 140, g: 140, b: 140
   }
+  y -= 20
 
-  y_right -= 30
+  status = args.state.status || ''
+  age = demo_tick - (args.state.status_tick || 0)
+  brightness = 220 - [[age, 120].min, 0].max
+  args.outputs.labels << {
+    x: x, y: y,
+    text: status,
+    size_px: 14,
+    r: brightness, g: brightness, b: brightness
+  }
+  y -= gap + 8
 
-  # Collect all tokens
-  all_tokens_flat = parser.lines.flat_map { |line| line.tokens }
-  token_types = all_tokens_flat.map { |t| t[:type] }.uniq.sort
+  # Dirty state
+  args.outputs.labels << {
+    x: x, y: y,
+    text: 'Parse State:',
+    size_px: 14,
+    r: 140, g: 140, b: 140
+  }
+  y -= 20
 
-  token_types.each do |type|
-    count = all_tokens_flat.count { |t| t[:type] == type }
-    color = COLORS[type] || { r: 255, g: 255, b: 255 }
-
+  if parser.dirty?
     args.outputs.labels << {
-      x: x_right,
-      y: y_right,
-      text: "#{type}: #{count}",
+      x: x, y: y,
+      text: "Dirty from line #{parser.dirty_from + 1}",
       size_px: 14,
-      **color
+      r: 224, g: 108, b: 117
     }
-    y_right -= 22
-  end
-
-  # Stats section
-  y_right -= 20
-  args.outputs.labels << {
-    x: x_right,
-    y: y_right,
-    text: 'Parser Stats',
-    size_px: 18,
-    r: 200, g: 200, b: 200
-  }
-
-  y_right -= 30
-  stats = [
-    "Total lines: #{parser.lines.length}",
-    "Total tokens: #{all_tokens_flat.length}",
-    "Max stack depth: #{parser.lines.map { |l| l.stack.length }.max || 0}"
-  ]
-
-  stats.each do |stat|
+  else
     args.outputs.labels << {
-      x: x_right,
-      y: y_right,
+      x: x, y: y,
+      text: 'Clean (converged)',
+      size_px: 14,
+      r: 152, g: 195, b: 121
+    }
+  end
+  y -= gap + 8
+
+  # Stats
+  args.outputs.labels << {
+    x: x, y: y,
+    text: 'Stats:',
+    size_px: 14,
+    r: 140, g: 140, b: 140
+  }
+  y -= 20
+
+  total_tokens = parser.lines.inject(0) { |s, l| s + l.tokens.length }
+  max_depth = parser.lines.map { |l| l.stack.length }.max || 0
+
+  [
+    "Lines: #{parser.line_count}",
+    "Tokens: #{total_tokens}",
+    "Max stack depth: #{max_depth}"
+  ].each do |stat|
+    args.outputs.labels << {
+      x: x, y: y,
       text: stat,
       size_px: 14,
-      r: 180, g: 180, b: 180
+      r: 171, g: 178, b: 191
     }
-    y_right -= 22
+    y -= 22
   end
 
-  # Footer
+  # Legend
+  y -= 16
   args.outputs.labels << {
-    x: 640,
-    y: 20,
-    text: 'dr-parser-rb 0.0.1 - 157 tests passing',
+    x: x, y: y,
+    text: 'Legend:',
     size_px: 14,
-    alignment_enum: 1,
-    r: 150, g: 150, b: 150
+    r: 140, g: 140, b: 140
+  }
+  y -= 22
+  args.outputs.solids << { x: x, y: y - 4, w: 14, h: 14, r: 100, g: 30, b: 30, a: 140 }
+  args.outputs.labels << {
+    x: x + 20, y: y,
+    text: 'Needs reparse',
+    size_px: 12,
+    r: 120, g: 120, b: 120
   }
 
-  args.outputs.primitives << GTK.framerate_diagnostics_primitives
+  # Progress
+  y -= 36
+  pct = (demo_tick * 100) / DEMO_CYCLE
+  args.outputs.labels << {
+    x: x, y: y,
+    text: "Demo: #{pct}% (loops every #{DEMO_CYCLE / 60}s)",
+    size_px: 11,
+    r: 70, g: 70, b: 70
+  }
 end

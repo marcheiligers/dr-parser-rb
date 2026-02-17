@@ -1,0 +1,44 @@
+[
+  {
+    "tick": 180,
+    "label": "Edit: change greeting text",
+    "start": 2,
+    "count": 1,
+    "lines": ["    puts \"hello\"\n"]
+  },
+  {
+    "tick": 360,
+    "label": "Insert: add local variable",
+    "start": 6,
+    "count": 0,
+    "lines": ["    c = a + b\n"]
+  },
+  {
+    "tick": 540,
+    "label": "Break: unclosed string!",
+    "start": 2,
+    "count": 1,
+    "lines": ["    puts \"\n"]
+  },
+  {
+    "tick": 720,
+    "label": "Fix: close the string",
+    "start": 2,
+    "count": 1,
+    "lines": ["    puts \"fixed!\"\n"]
+  },
+  {
+    "tick": 900,
+    "label": "Delete: remove variable",
+    "start": 6,
+    "count": 1,
+    "lines": []
+  },
+  {
+    "tick": 1080,
+    "label": "Insert: add new method",
+    "start": 8,
+    "count": 0,
+    "lines": ["\n", "  def sub(a, b)\n", "    a - b\n", "  end\n"]
+  }
+]
