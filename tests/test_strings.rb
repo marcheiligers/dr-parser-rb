@@ -111,34 +111,100 @@ def test_parses_interpolation_at_start(_args, assert)
   ])
 end
 
+def test_parses_ivar_in_interpolation(_args, assert)
+  assert_parses_to(assert, '"hello #{@name}"', [
+    token(:string, '"hello ', 0, 6),
+    token(:interpolation_start, '#{', 7, 8),
+    token(:ivar, '@name', 9, 13),
+    token(:interpolation_end, '}', 14, 14),
+    token(:string, '"', 15, 15)
+  ])
+end
+
+# ---- Backtick strings (shell commands) ----------------------------------------
+
+def test_parses_backtick_string(_args, assert)
+  assert_parses_to(assert, '`ls -la`', [
+    token(:backtick, '`ls -la`', 0, 7)
+  ])
+end
+
+def test_parses_backtick_with_interpolation(_args, assert)
+  assert_parses_to(assert, '`echo #{name}`', [
+    token(:backtick, '`echo ', 0, 5),
+    token(:interpolation_start, '#{', 6, 7),
+    token(:identifier, 'name', 8, 11),
+    token(:interpolation_end, '}', 12, 12),
+    token(:backtick, '`', 13, 13)
+  ])
+end
+
+def test_parses_backtick_assignment(_args, assert)
+  assert_parses_to(assert, 'output = `ls`', [
+    token(:identifier, 'output', 0, 5),
+    token(:whitespace, ' ', 6, 6),
+    token(:operator, '=', 7, 7),
+    token(:whitespace, ' ', 8, 8),
+    token(:backtick, '`ls`', 9, 12)
+  ])
+end
+
+def test_parses_incomplete_backtick(_args, assert)
+  parser = Parser::RubyLine.new('`ls -la').parse
+  assert.equal!(parser.stack.map(&:type), [:backtick])
+  types = parser.tokens.map { |t| t[:type] }
+  assert.true!(types.include?(:backtick))
+end
+
+def test_closing_brace_without_frame(_args, assert)
+  code = <<~CODE
+    shrug = 123 }
+  CODE
+  parser = Parser::Ruby.new(code)
+  assert.true!(parser.lines.length > 0)
+end
+
 # ---- Test stack --------------------------------------------------------------
 
 def test_stack_empty_for_a_full_string(_args, assert)
-  parser = RubyLineParser.new('"hello, world"').parse
+  parser = Parser::RubyLine.new('"hello, world"').parse
   assert.true!(parser.stack.empty?)
 end
 
 def test_stack_empty_for_a_full_string_with_interpolation(_args, assert)
-  parser = RubyLineParser.new('"hello, #{"world"}"').parse
+  parser = Parser::RubyLine.new('"hello, #{"world"}"').parse
   assert.true!(parser.stack.empty?)
 end
 
 def test_stack_string_double_for_incomplete_string(_args, assert)
-  parser = RubyLineParser.new('"hello, world').parse
+  parser = Parser::RubyLine.new('"hello, world').parse
   assert.equal!(parser.stack.map(&:type), [:string_double])
 end
 
 def test_stack_string_double_for_incomplete_string_in_interpolation(_args, assert)
-  parser = RubyLineParser.new('"hello, #{"world').parse
+  parser = Parser::RubyLine.new('"hello, #{"world').parse
   assert.equal!(parser.stack.map(&:type), [:string_double, :interpolation, :string_double])
 end
 
 def test_stack_for_two_line_horror_string_with_interpolation(_args, assert)
-  parser1 = RubyLineParser.new('"hello, #{"world').parse
+  parser1 = Parser::RubyLine.new('"hello, #{"world').parse
   assert.equal!(parser1.stack.map(&:type), [:string_double, :interpolation, :string_double])
 
-  parser2 = RubyLineParser.new('"}"', parser1.stack).parse
+  parser2 = Parser::RubyLine.new('"}"', parser1.stack).parse
   assert.true!(parser2.stack.empty?)
 
   assert.false!(parser1.stack.empty?) # We dup the stack
 end
+
+def test_multiline_interpolation_in_a_string(_args, assert)
+  code = <<~CODE
+    str = "something \#{
+      this
+    } way comes
+    "
+  CODE
+  parser = Parser::Ruby.new(code)
+  assert.true!(parser.lines.last.stack.empty?)
+  # debug_parser(parser)
+end
+

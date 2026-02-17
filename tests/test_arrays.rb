@@ -68,33 +68,33 @@ def test_parses_percent_capital_i_array(_args, assert)
   ])
 end
 
-def test_parses_percent_x_array(_args, assert)
+def test_parses_percent_x_command(_args, assert)
   assert_parses_to(assert, '%x[ls -la]', [
-    token(:array_literal, '%x[ls -la]', 0, 9)
+    token(:backtick, '%x[ls -la]', 0, 9)
   ])
 end
 
 def test_parses_percent_q_string(_args, assert)
   assert_parses_to(assert, '%q[hello world]', [
-    token(:array_literal, '%q[hello world]', 0, 14)
+    token(:string, '%q[hello world]', 0, 14)
   ])
 end
 
 def test_parses_percent_capital_q_string(_args, assert)
   assert_parses_to(assert, '%Q[hello world]', [
-    token(:array_literal, '%Q[hello world]', 0, 14)
+    token(:string, '%Q[hello world]', 0, 14)
   ])
 end
 
 def test_parses_percent_r_regex(_args, assert)
   assert_parses_to(assert, '%r[pattern]', [
-    token(:array_literal, '%r[pattern]', 0, 10)
+    token(:string, '%r[pattern]', 0, 10)
   ])
 end
 
 def test_parses_percent_s_symbol(_args, assert)
   assert_parses_to(assert, '%s[symbol]', [
-    token(:array_literal, '%s[symbol]', 0, 9)
+    token(:symbol, '%s[symbol]', 0, 9)
   ])
 end
 
@@ -158,4 +158,54 @@ def test_parses_percent_w_incomplete(_args, assert)
   assert_parses_to(assert, '%w[one two', [
     token(:array_literal, '%w[one two', 0, 9)
   ])
+end
+
+# ---- Multiline array tests ---------------------------------------------------
+
+def test_multiline_array_basic(_args, assert)
+  parser1 = Parser::RubyLine.new('[1,').parse
+  assert.equal!(parser1.stack.map(&:type), [:array])
+
+  parser2 = Parser::RubyLine.new('2]', parser1.stack).parse
+  assert.true!(parser2.stack.empty?)
+  assert.false!(parser1.stack.empty?)  # We dup the stack
+end
+
+def test_multiline_array_empty(_args, assert)
+  parser1 = Parser::RubyLine.new('[').parse
+  assert.equal!(parser1.stack.map(&:type), [:array])
+
+  parser2 = Parser::RubyLine.new(']', parser1.stack).parse
+  assert.true!(parser2.stack.empty?)
+end
+
+def test_multiline_array_nested(_args, assert)
+  parser1 = Parser::RubyLine.new('[[1,').parse
+  assert.equal!(parser1.stack.map(&:type), [:array, :array])
+
+  parser2 = Parser::RubyLine.new('2]]', parser1.stack).parse
+  assert.true!(parser2.stack.empty?)
+end
+
+def test_multiline_array_with_hash(_args, assert)
+  parser1 = Parser::RubyLine.new('[{a:').parse
+  assert.equal!(parser1.stack.map(&:type), [:array, :hash])
+
+  parser2 = Parser::RubyLine.new('1}]', parser1.stack).parse
+  assert.true!(parser2.stack.empty?)
+end
+
+def test_multiline_nested_array(_args, assert)
+  code = <<~'CODE'
+    arr = [
+      [
+        1,
+        2
+      ]
+    ]
+  CODE
+  parser = Parser::Ruby.new(code)
+  assert.equal!(parser.lines[0].stack.map(&:type), [:array])
+  assert.equal!(parser.lines[2].stack.map(&:type), [:array, :array])
+  assert.true!(parser.lines[5].stack.empty?)
 end

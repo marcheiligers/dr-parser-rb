@@ -19,7 +19,13 @@ This navigates to the parent directory and executes `./dragonruby dr-parse-rb`.
 ./test [test_file]
 ```
 - Without arguments: runs all tests in `tests/tests.rb`
-- With argument: runs specific test file (automatically prefixes with `tests/` and appends `.rb` if needed)
+- With argument: runs specific test file. This will automatically (if needed):
+  - prefix with `tests/`,
+  - prepend `test_` on the file,
+  - append `.rb`
+  and you can target specific tests with:
+  - append `:123` to run only the test on that line
+  - or append `#partial_name` to only run tests that have this in their name
 - Tests run with `SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy` for headless execution
 - Uses flags: `--test <file> --no-tick`
 

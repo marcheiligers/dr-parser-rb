@@ -65,7 +65,7 @@ restore_file() {
 }
 
 # Set trap to restore file on exit or interrupt
-trap restore_file EXIT INT TERM
+trap restore_file EXIT SIGINT SIGTERM SIGKILL
 
 # If a single test is requested, modify the file to disable other tests
 if [ -n "$SINGLE_TEST" ]; then
@@ -80,4 +80,4 @@ if [ -n "$SINGLE_TEST" ]; then
   sed -i '' "s/def xtest_${TARGET_TEST}/def test_${TARGET_TEST}/g" "$FULL_TEST_FILE"
 fi
 
-SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy ./dragonruby dr-parser-rb --test "$TEST_FILE" --no-tick
+SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy timeout -k5 4 ./dragonruby dr-parser-rb --test "$TEST_FILE" --no-tick

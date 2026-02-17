@@ -243,8 +243,7 @@ end
 def test_parses_namespaced_constant(_args, assert)
   assert_parses_to(assert, 'Foo::Bar', [
     token(:constant, 'Foo', 0, 2),
-    token(:operator, ':', 3, 3),
-    token(:operator, ':', 4, 4),
+    token(:operator, '::', 3, 4),
     token(:constant, 'Bar', 5, 7)
   ])
 end
@@ -308,6 +307,219 @@ def test_parses_def_bang_method(_args, assert)
     token(:keyword, 'def', 0, 2),
     token(:whitespace, ' ', 3, 3),
     token(:identifier, 'reset!', 4, 9)
+  ])
+end
+
+def test_parses_quoted_symbol_with_interpolation(_args, assert)
+  assert_parses_to(assert, ':"prefix_#{name}"', [
+    token(:symbol, ':"', 0, 1),
+    token(:string, 'prefix_', 2, 8),
+    token(:interpolation_start, '#{', 9, 10),
+    token(:identifier, 'name', 11, 14),
+    token(:interpolation_end, '}', 15, 15),
+    token(:string, '"', 16, 16)
+  ])
+end
+
+def test_parses_stabby_lambda_operator(_args, assert)
+  assert_parses_to(assert, '->', [
+    token(:lambda, '->', 0, 1)
+  ])
+end
+
+def test_parses_instance_variable(_args, assert)
+  assert_parses_to(assert, '@name', [
+    token(:ivar, '@name', 0, 4)
+  ])
+end
+
+def test_parses_instance_variable_with_underscore(_args, assert)
+  assert_parses_to(assert, '@my_var', [
+    token(:ivar, '@my_var', 0, 6)
+  ])
+end
+
+def test_parses_instance_variable_assignment(_args, assert)
+  assert_parses_to(assert, '@name = "test"', [
+    token(:ivar, '@name', 0, 4),
+    token(:whitespace, ' ', 5, 5),
+    token(:operator, '=', 6, 6),
+    token(:whitespace, ' ', 7, 7),
+    token(:string, '"test"', 8, 13)
+  ])
+end
+
+def test_parses_instance_variable_method_call(_args, assert)
+  assert_parses_to(assert, '@items.length', [
+    token(:ivar, '@items', 0, 5),
+    token(:operator, '.', 6, 6),
+    token(:identifier, 'length', 7, 12)
+  ])
+end
+
+def test_parses_class_variable(_args, assert)
+  assert_parses_to(assert, '@@count', [
+    token(:cvar, '@@count', 0, 6)
+  ])
+end
+
+def test_parses_class_variable_assignment(_args, assert)
+  assert_parses_to(assert, '@@count = 0', [
+    token(:cvar, '@@count', 0, 6),
+    token(:whitespace, ' ', 7, 7),
+    token(:operator, '=', 8, 8),
+    token(:whitespace, ' ', 9, 9),
+    token(:number, '0', 10, 10)
+  ])
+end
+
+# ---- Numeric literal variations -----------------------------------------------
+
+def test_parses_hex_literal(_args, assert)
+  assert_parses_to(assert, '0xFF', [
+    token(:number, '0xFF', 0, 3)
+  ])
+end
+
+def test_parses_hex_literal_uppercase(_args, assert)
+  assert_parses_to(assert, '0XAB', [
+    token(:number, '0XAB', 0, 3)
+  ])
+end
+
+def test_parses_binary_literal(_args, assert)
+  assert_parses_to(assert, '0b1010', [
+    token(:number, '0b1010', 0, 5)
+  ])
+end
+
+def test_parses_octal_literal(_args, assert)
+  assert_parses_to(assert, '0o755', [
+    token(:number, '0o755', 0, 4)
+  ])
+end
+
+def test_parses_scientific_notation(_args, assert)
+  assert_parses_to(assert, '1.5e10', [
+    token(:number, '1.5e10', 0, 5)
+  ])
+end
+
+def test_parses_scientific_notation_negative_exponent(_args, assert)
+  assert_parses_to(assert, '2.5e-3', [
+    token(:number, '2.5e-3', 0, 5)
+  ])
+end
+
+def test_parses_scientific_notation_positive_exponent(_args, assert)
+  assert_parses_to(assert, '1e+5', [
+    token(:number, '1e+5', 0, 3)
+  ])
+end
+
+# ---- Character literals -------------------------------------------------------
+
+def test_parses_character_literal(_args, assert)
+  assert_parses_to(assert, 'char = ?a', [
+    token(:identifier, 'char', 0, 3),
+    token(:whitespace, ' ', 4, 4),
+    token(:operator, '=', 5, 5),
+    token(:whitespace, ' ', 6, 6),
+    token(:string, '?a', 7, 8)
+  ])
+end
+
+def test_parses_escaped_character_literal(_args, assert)
+  assert_parses_to(assert, '?\\n', [
+    token(:string, '?\\n', 0, 2)
+  ])
+end
+
+def test_parses_ternary_not_character(_args, assert)
+  # After an identifier, ? should be ternary operator, not character literal
+  assert_parses_to(assert, 'x ?a', [
+    token(:identifier, 'x', 0, 0),
+    token(:whitespace, ' ', 1, 1),
+    token(:operator, '?', 2, 2),
+    token(:identifier, 'a', 3, 3)
+  ])
+end
+
+# ---- Range operators ----------------------------------------------------------
+
+def test_parses_inclusive_range(_args, assert)
+  assert_parses_to(assert, '1..10', [
+    token(:number, '1', 0, 0),
+    token(:operator, '..', 1, 2),
+    token(:number, '10', 3, 4)
+  ])
+end
+
+def test_parses_exclusive_range(_args, assert)
+  assert_parses_to(assert, '1...10', [
+    token(:number, '1', 0, 0),
+    token(:operator, '...', 1, 3),
+    token(:number, '10', 4, 5)
+  ])
+end
+
+# ---- Compound assignment operators --------------------------------------------
+
+def test_parses_plus_equals(_args, assert)
+  assert_parses_to(assert, 'x += 1', [
+    token(:identifier, 'x', 0, 0),
+    token(:whitespace, ' ', 1, 1),
+    token(:operator, '+=', 2, 3),
+    token(:whitespace, ' ', 4, 4),
+    token(:number, '1', 5, 5)
+  ])
+end
+
+def test_parses_minus_equals(_args, assert)
+  assert_parses_to(assert, 'x -= 1', [
+    token(:identifier, 'x', 0, 0),
+    token(:whitespace, ' ', 1, 1),
+    token(:operator, '-=', 2, 3),
+    token(:whitespace, ' ', 4, 4),
+    token(:number, '1', 5, 5)
+  ])
+end
+
+def test_parses_or_equals(_args, assert)
+  assert_parses_to(assert, 'x ||= 5', [
+    token(:identifier, 'x', 0, 0),
+    token(:whitespace, ' ', 1, 1),
+    token(:operator, '||=', 2, 4),
+    token(:whitespace, ' ', 5, 5),
+    token(:number, '5', 6, 6)
+  ])
+end
+
+def test_parses_and_equals(_args, assert)
+  assert_parses_to(assert, 'x &&= 5', [
+    token(:identifier, 'x', 0, 0),
+    token(:whitespace, ' ', 1, 1),
+    token(:operator, '&&=', 2, 4),
+    token(:whitespace, ' ', 5, 5),
+    token(:number, '5', 6, 6)
+  ])
+end
+
+def test_parses_power_operator(_args, assert)
+  assert_parses_to(assert, '2 ** 8', [
+    token(:number, '2', 0, 0),
+    token(:whitespace, ' ', 1, 1),
+    token(:operator, '**', 2, 3),
+    token(:whitespace, ' ', 4, 4),
+    token(:number, '8', 5, 5)
+  ])
+end
+
+def test_parses_scope_resolution(_args, assert)
+  assert_parses_to(assert, 'Foo::Bar', [
+    token(:constant, 'Foo', 0, 2),
+    token(:operator, '::', 3, 4),
+    token(:constant, 'Bar', 5, 7)
   ])
 end
 
